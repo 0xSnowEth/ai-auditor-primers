@@ -1,4 +1,4 @@
-# Base Smart Contract Auditor Primer v0.4
+# Base Smart Contract Auditor Primer v0.1
 
 ## Overview
 This primer contains a general range of critical security patterns, heuristics and vulnerabilities useful for smart contract auditing. It is designed to provide a useful base that can be extended into particular specializations.
