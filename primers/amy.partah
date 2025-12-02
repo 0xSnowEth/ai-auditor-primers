@@ -1,0 +1,1000 @@
+- Harvest timing manipulation
+- Liquidation race conditions
+- Interest compounding exploitation
+- Position action arbitrage
+- Slippage exploitation
+- Reward claiming front-running
+- CDP liquidation MEV
+- Flash loan sandwich attacks
+- ERC4626 operation timing
+- Discount trading arbitrage
+- Short order manipulation
+- FundingRateArbitrage entry/exit timing
+- Refinancing before liquidation
+- Commitment replay timing
+- Dutch auction settlement
+- Transfer reserve front-running
+- Compound function parameter manipulation
+- Prize claiming MEV (PoolTogether)
+- Vault contribution timing (PoolTogether)
+- Tier odds manipulation (PoolTogether)
+- Fee swap MEV exploitation (Beefy)
+- Reward distribution timing (Silo)
+- Liquidation oracle update exploitation
+- Oracle price deviation arbitrage (mint at oracle price, sell at market)
+- Rebalancing operation front-running
+- Exploiting DAI price assumptions for profit
+- Manipulating collateral sales during rebalancing
+- Front-running mint/burn operations with unchecked access control
+
+### 5. Cross-Chain Attacks
+- Share value manipulation during cross-chain transfers
+- Front-running cross-chain operations
+- Exploiting mint/burn vs lock/unlock mechanisms
+- Message replay attacks
+- Bridge timing exploits
+- Source chain validation bypass
+- Chain ID type mismatches
+- Message decoding failures
+- Cross-chain liquidation delays
+
+### 6. External Protocol Manipulation
+- Permissionless functions in integrated protocols
+- Bypassing intended reward flows
+- State inconsistencies from external calls
+- Pause-related DoS vectors
+- Callback-based re-entrancy
+- Hook permission exploitation
+- Missing interface implementations
+- Fee bypass in vault integrations
+- Paused protocol cascading failures
+- Deprecated function usage
+- Position action integration failures
+- ERC4626 exchange rate attacks
+- Arbitrary call exploitation in withdrawals
+- Blocklist token exploits
+- Bearer asset manipulation
+- Clearing house exploitation
+- GMX cooldown parameter exploitation
+- Direct reward claiming bypass
+- Incompatible yield vault behaviors (PoolTogether)
+- Hook implementation attacks (PoolTogether)
+- Series conflicts between AutoRollers (Sense)
+- Concentrated liquidity pool.slot0 manipulation (Beefy)
+- Market-specific limitations exploitation (Silo)
+- Liquidation denial via yield vault collateral
+- Exploiting Uniswap V3 balance assumptions in concentrated liquidity
+- Oracle configuration errors for profit
+- Chainlink oracle decimal assumption exploits
+- Circuit breaker edge case exploitation
+- Wrong oracle address exploitation for incorrect valuations
+- Permit2 partial transfer exploitation
+- State/transfer amount mismatches
+- Witness data manipulation with valid signatures
+- Permit2 witness validation failures
+- EIP-712 struct encoding errors
+- Incomplete type string definitions
+- Permit2 witness validation failures
+- EIP-712 struct encoding errors
+- Incomplete type string definitions
+- ERC1271 malicious contract validation
+
+### 7. Accounting Manipulation
+- Direct token transfers breaking internal accounting
+- Share/asset confusion in calculations
+- Decimal handling errors across protocols
+- Interest calculation mismatches
+- Fee distribution dilution
+- Reward overwrite vulnerabilities
+- Balance-based calculation exploits
+- Collateral tracking errors
+- Position state inconsistencies
+- Multi-vault accounting corruption
+- Phase transition accounting bugs
+- Storage slot calculation errors
+- Packed data handling errors
+- yDUSD totalSupply desynchronization
+- FundingRateArbitrage index manipulation
+- Rounding direction exploitation
+- Slope accounting errors in buyouts
+- Yield calculation corruptions
+- Withdrawal reserve miscalculations
+- Epoch processing errors
+- Interest compounding exploitation
+- Dynamic emission rate miscalculations
+- Small position reward loss
+- Exchange rate calculation flaws (PoolTogether)
+- Reserve injection tracking (PoolTogether)
+- TWAB balance manipulation (PoolTogether)
+- Asset/share type confusion (PoolTogether)
+- Yield theft through exit mechanisms (Sense)
+- Fee accumulation from rounding (Beefy)
+- Fee share timing errors (Silo)
+- Liquidation accounting discrepancies
+- Exploiting collateral factor calculation gaps
+- Manipulating rebalancing through removed collateral
+- Price calculation formula errors in Uniswap V3 integration
+- Oracle unit mismatch exploitation (USD vs DAI denomination)
+- Partial collateral sale precision loss
+- Meta vault totalAssets() misreporting
+- Strategy TVL vs owned shares confusion
+- Multi-layer yield exclusion in vault hierarchies
+- Direct strategy deposit exploitation
+
+### 8. Collateralization Attacks
+- Exploiting under-collateralized states
+- Preventing vault recovery
+- Donation-based attacks
+- Precision loss triggering false under-collateralization
+- Yield vault compatibility issues
+- Exchange rate manipulation
+- Collateralization check timing
+- Zero withdrawable asset edge cases
+- Fee-on-transfer breaking assumptions
+- Liquidation before actual default
+- Creating positions below liquidation threshold
+
+### 9. Type Safety Vulnerabilities
+- Silent downcasting overflows
+- Unsafe type conversions
+- Prize size overflow
+- Fee calculation overflows
+- Slope/yIntercept overflows
+- Timestamp overflows
+- Balance type mismatches
+- Silent truncation in transfers
+- Price calculation overflows (Beefy)
+- Liquidation amount overflows
+
+### 10. Prize Distribution Attacks
+- TWAB time range manipulation
+- Observation creation prevention
+- Vault contribution calculation errors
+- Tier expansion manipulation
+- Draw manager control
+- Reserve fund theft
+- Incorrect odds calculations
+- Claim incentive misalignment
+
+### 11. Input Validation Attacks
+- Unchecked ownership transfer exploitation
+- Matching input bypass vulnerabilities
+- Empty array validation bypass
+- Unchecked return value exploitation
+- Missing parameter validation
+- Type confusion attacks
+- Boundary condition exploitation
+- Zero/max value edge cases
+- Smart contract wallet signature collisions
+- Zero-length signature handling errors
+- Approved hash collision vulnerabilities
+- Deterministic ID generation with ERC1271
+
+### 12. Liquidation-Specific Attack Vectors
+- Self-liquidation for profit
+- Liquidation timing manipulation
+- Partial liquidation gaming
+- Collateral selection exploitation
+- Health score manipulation
+- Bad debt avoidance
+- Insurance fund draining
+- Oracle sandwich liquidation
+- Cross-position liquidation blocking
+- Liquidation reward theft
+
+### 13. Oracle-Specific Attack Vectors
+- Price Inversion Attacks: Exploiting inverted base/quote token pairs to get incorrect prices
+- Decimal Assumption Attacks: Exploiting hardcoded decimal assumptions when oracles use different decimals
+- Stale Price Acceptance: Using outdated prices when freshness checks are missing
+- Circuit Breaker Exploitation: Taking advantage of min/max price limits in oracles
+- Multi-Oracle Averaging Attacks: Exploiting incompatible price formats when averaging multiple oracles
+- Spot vs TWAP Arbitrage: Using spot price manipulation when protocol expects TWAP
+- Oracle Address Misconfiguration: Exploiting wrong oracle addresses (e.g., ETH/USD for BTC)
+- Unit Denomination Attacks: Exploiting USD-denominated oracles in DAI-denominated systems
+
+### 14. Rebalancing Mechanism Attacks
+- Underflow Attacks: Crafting swaps that cause rebalancing math to underflow
+- Flutter Ratio Manipulation: Pushing collateral ratios to cause array out-of-bounds
+- Logical Operator Exploitation: Exploiting || vs && errors to force unintended behavior
+- Precision Loss Attacks: Exploiting division-heavy calculations that round to zero
+- DAI Path Exploitation: Forcing rebalancing to attempt selling DAI without configured paths
+- Collateral Removal Gaming: Exploiting removed-but-held collateral in calculations
+- Partial Sale Precision Attacks: Making partial collateral sales round to zero
+
+### 15. Stablecoin-Specific Attacks
+- Depeg Arbitrage: Exploiting wrapped asset price assumptions (WBTC/BTC)
+- Mint Without Backing: Using low CR and stale prices to mint unbacked stablecoins
+- Unit Mismatch Exploitation: Exploiting USD vs DAI denomination mismatches
+- Missing Redeem Exploitation: Taking advantage of one-way conversion mechanisms
+- Rebalancing Manipulation: Forcing unfavorable rebalancing to drain collateral
+- Oracle Deviation Minting: Minting at stale oracle prices and selling at market
+
+### 16. Access Control Exploitation
+- Unrestricted Minting: Calling public mint functions to inflate supply
+- Unrestricted Burning: Calling public burn functions to deflate supply
+- Supply Manipulation: Using mint/burn to manipulate rebalancing calculations
+- Strategic Timing: Minting before rebalancing to affect collateral ratios
+
+## Integration Hazards
+
+### 1. Problematic Token Types
+- Fee-on-Transfer (FOT): Deflationary tokens that charge fees
+- Rebasing Tokens: Supply adjusts periodically (e.g., stETH)
+- ERC777 Tokens: Have hooks that enable reentrancy
+- Multiple Entry Points: Tokens with multiple transfer methods
+- Upgradeable Tokens: Can change behavior post-deployment
+- Pausable Tokens: Can halt transfers
+- Blacklistable Tokens: Can block specific addresses (USDT, USDC)
+- Tokens with >18 decimals: Cause underflow in scaling logic
+- Non-standard return values: Some tokens don't return booleans
+- Tokens with transfer restrictions
+- DAI: Non-standard permit signature
+- Non-18 decimal tokens: Require careful decimal handling
+- Tokens with low decimals: Amplify rounding errors
+- WETH: Special handling for native ETH operations
+- Tokens that revert on zero transfers: LEND and others
+- Tokens with low decimals: USDC (6), WBTC (8)
+- Bearer asset tokens: Can block repayments
+- GMX whitelisted tokens with fee potential
+- Unchecked transfer return tokens (Sense)
+- Zero-reverting approval tokens like BNB (Silo)
+- Tokens used for liquidation with deny lists
+
+### 2. DeFi Protocol Interactions
+- Oracle Dependencies: Price manipulation risks
+- Lending Protocol Integration: Liquidation cascades
+- AMM Integration: Impermanent loss considerations
+- Yield Aggregator Risks: Recursive complexity
+- LP Position Risks: Concentrated liquidity vulnerabilities
+- Auto-redemption Dependencies: External API/oracle risks
+- Hook Protocol Integration: Permission and re-entrancy risks
+- Sequencer dependencies on L2s
+- ERC4626 vault fee handling
+- Multi-token pool integration complexities
+- Morpho market configuration validation
+- Compound vs simple interest mismatches
+- Chainlink deprecated functions
+- Spot price vulnerabilities
+- CDP vault integration complexities
+- Position action protocol interactions
+- Flash loan protocol variations
+- Discount fee mechanisms
+- Short order interactions
+- External call vulnerabilities in funding operations
+- Seaport auction integration
+- Collateralized lending complications
+- Dutch auction mechanics
+- Clearing house settlement
+- GMX reward router integration
+- Uniswap V3 pool selection manipulation
+- Vault strategy validation requirements
+- TWAB controller requirements
+- Prize pool integration constraints
+- Series creation conflicts (Sense)
+- Uniswap V3 slot0 dependencies (Beefy)
+- Multi-market coordination requirements (Silo)
+- Liquidation protocol integrations
+- **Permit2 Integration Pitfalls**:
+  - Witness hash must use EIP-712 struct encoding
+  - Type strings must include all referenced types
+  - Witness type name must be followed by ` witness)`
+  - Standard signing tools expect exact format compliance
+
+### 3. Complex Protocol Interactions
+- Cross-collateral dependencies
+- Liquidity fragmentation
+- Cascading liquidations
+- Protocol composition risks
+- Yield position liquidation gaps
+- Auto redemption timing risks
+- Multi-pool liquidity sharing
+- Cross-chain state synchronization
+- Range-based liquidity management
+- Cross-closure value transfers
+- Multi-strategy coordination issues
+- Bad debt socialization mechanisms
+- CDP vault liquidation mechanics
+- Flash loan fee considerations
+- Position lever operation chains
+- Multi-vault yield distribution
+- Reward system interdependencies
+- Discount fee propagation
+- Short position dependencies
+- FundingRateArbitrage cross-protocol risks
+- Lien token bearer asset risks
+- Clearing house settlement mechanics
+- Buyout lien interactions
+- Public vault dependencies
+- GMX cooldown cascading effects
+- Migration state dependencies
+- Delegation system interactions
+- Prize distribution dependencies
+- Tier expansion impacts
+- AutoRoller series conflicts (Sense)
+- Concentrated liquidity range management (Beefy)
+- Market cap distribution logic (Silo)
+- Multi-collateral liquidation sequences
+- Partial liquidation state transitions
+
+### 4. Cross-Chain Bridge Integration
+- LayerZero/similar protocol risks
+- Share value distortion with mint/burn
+- Callback requirements
+- Message validation
+- Cross-chain timing exploits
+- Bridge-specific vulnerabilities
+- CCIP integration issues
+- Chain ID mismatches
+- Message ordering guarantees
+- Chain-specific deployment issues (Arbitrum vs Avalanche)
+- Meta vault asset aggregation errors
+- Nested vault accounting mismatches
+- Cross-vault share price dependencies
+- Strategy direct deposit vulnerabilities
+
+### 5. Multi-Protocol DeFi Integration
+- Inconsistent risk parameters across protocols
+- Missing interface implementations
+- Incorrect function signatures
+- Chain-specific configuration errors
+- Protocol upgrade coordination
+- Fee token selection issues
+- Adjustor implementation errors
+- Diamond proxy complexities
+- Strategy decimal mismatches
+- Interest calculation inconsistencies
+- Wrong parameter routing
+- Protocol pause cascades
+- Position action multi-protocol flows
+- Stablecoin backing mechanisms
+- Collateral valuation differences
+- Arbitrary external call risks
+- Liquidation mechanism conflicts
+- Settlement timing differences
+- Vault strategy validation
+- GMX protocol specific integrations
+- Yield vault compatibility constraints
+- Hook implementation requirements
+- ERC4626 rounding compliance (Sense)
+- Router address hardcoding (Beefy)
+- Market-specific deposit limits (Silo)
+- Cross-protocol liquidation timing
+
+### 6. Reward System Integration
+- External protocols with permissionless claim functions
+- Hardcoded reward vault types
+- Pause mechanisms affecting reward claims
+- Complex reward re-investment flows
+- Vault type transition risks
+- Referral system manipulation
+- Wrong owner in delegated operations
+- Fee distribution dilution
+- Performance fee bypass vulnerabilities
+- Reward overwrite issues
+- Hardcoded time limits
+- Vesting array growth attacks
+- Multi-pool reward synchronization
+- yDUSD yield distribution
+- Discount fee rewards
+- Strategist fee exploitation
+- Interest reward miscalculations
+- Liquidation reward gaming
+- Dynamic emission rate handling
+- Small position reward loss
+- Direct claim bypassing compound logic
+- Prize claiming fee structures
+- Yield fee distribution
+- Yield theft mechanisms (Sense)
+- Fee share timing issues (Silo)
+
+### 7. Hook and Callback Systems
+- Re-entrancy through hook calls
+- Permission bypass vulnerabilities
+- State corruption via callbacks
+- Cross-contract re-entrancy patterns
+- Hook whitelisting requirements
+- Missing callback implementations
+- Hook execution timing
+- Flash action callback exploits
+- Gas limit considerations
+- Error handling in hooks
+- Hook-based DoS vectors
+- Liquidation callback manipulation
+
+### 8. Bridge-Specific Integration
+- Hardcoded parameters violating best practices
+- Static gas limits causing overpayment
+- Missing receiver validation
+- Lack of fee token flexibility
+- Redundant configuration
+- Type mismatches between protocols
+- Message size limitations
+
+### 9. AMM-Vault Integration Patterns
+- Range management complexities
+- Fee compounding timing issues
+- Multi-token pool coordination
+- Efficiency factor dependencies
+- Target value drift
+- Cross-closure interactions
+- Balancer array indexing issues
+- Pool parameter corruption
+- Position action AMM interactions
+- Dutch auction integration
+- Uniswap V3 illiquid pool exploitation
+- Liquidity provision timing
+- Concentrated liquidity deployment timing (Beefy)
+
+### 10. Router Integration Patterns
+- Allowance exploitation vulnerabilities
+- Permit signature weaknesses
+- Command parsing errors
+- Deposit limit interactions
+- Whitelist bypass opportunities
+- Multi-step operation risks
+- Owner parameter manipulation
+- Sweep token vulnerabilities
+- Router-vault decimal mismatches
+- Approval requirement mismatches
+- Hardcoded router addresses
+- Public approval functions (Sense)
+- Stale allowances on updates (Beefy)
+
+### 11. CDP Vault Integration
+- Liquidation mechanism complexities
+- Self-liquidation profitability
+- Front-running vulnerabilities
+- Bad debt handling
+- Interest calculation mismatches
+- Quota system exploits
+- Partial liquidation gaming
+- Token scale issues
+- Position action CDP operations
+- Lever mechanism interactions
+- Multi-position debt calculations
+- Liquidation timing windows
+
+### 12. ERC4626 Vault Specific
+- Exchange rate manipulation
+- Slippage vulnerabilities
+- Fee calculation complexities
+- Decimal mismatch handling
+- Preview function compliance
+- Share price inflation attacks
+- Donation vulnerability patterns
+- Multi-vault ERC4626 coordination
+- Direct minting accounting bugs
+- Timelock bypass mechanisms
+- Rounding direction exploitation
+- Minimum deposit enforcement
+- Fee-on-transfer incompatibility
+- MaxWithdraw penalty accounting
+- Zero share withdrawal attacks
+- Yield vault compatibility issues
+- Lossy strategy handling
+- First depositor manipulation (Sense)
+- Zero share minting (Beefy)
+- Market deposit cap coordination (Silo)
+
+### 13. Stablecoin-Specific Patterns
+- Discount fee exploitation
+- Self-backing through collateral
+- Price peg assumptions
+- Minting with insufficient collateral
+- Liquidation reward gaming
+- Oracle price manipulation
+- Cross-asset dependencies
+- Yield vault integration issues
+
+### 14. FundingRateArbitrage-Specific Patterns
+- Share inflation vulnerabilities
+- Rounding error exploitation
+- Index manipulation risks
+- Withdrawal timing attacks
+- Cross-protocol arbitrage opportunities
+- Admin approval dependencies
+- Balance calculation vulnerabilities
+- Interest rate mismatches
+
+### 15. Collateralized Lending Patterns (Astaria)
+- Bearer asset vulnerabilities (lien tokens)
+- Clearing house arbitrary settlement
+- Strategy bypass vulnerabilities
+- Liquidation overflow risks
+- Slope accounting errors
+- Public vault state corruption
+- Refinancing attack vectors
+- Decimal mismatch in auctions
+- Collateral recovery exploits
+- YIntercept calculation errors
+- Commitment replay attacks
+- Dutch auction manipulation
+- Buyout validation errors
+- Settlement logic flaws
+
+### 16. GMX-Specific Integration Patterns (RedactedCartel)
+- Cooldown duration exploitation
+- vGMX/vGLP migration blocking
+- Dynamic emission rate handling
+- Reward tracker division by zero
+- Compound function MEV vulnerabilities
+- Cross-chain router incompatibility
+- GlpManager oracle dependencies
+- Direct reward claim bypassing
+- Platform approval management
+- Fee-on-transfer token issues
+
+### 17. PoolTogether V5 Specific Patterns
+- TWAB controller integration requirements
+- Prize pool contribution mechanics
+- Delegation system complexities
+- Hook implementation constraints
+- Vault collateralization dependencies
+- Yield fee distribution mechanics
+- Reserve accounting requirements
+- Tier expansion implications
+- Draw timing constraints
+- Claimer incentive structures
+
+### 18. Sense Protocol AutoRoller Patterns
+- Series creation race conditions
+- Hardcoded infrastructure addresses
+- ERC4626 rounding violations
+- Yield collection during exits
+- Public approval DoS vectors
+- Small deposit reversion risks
+- Unchecked token transfers
+
+### 19. Beefy Concentrated Liquidity Patterns
+- Admin function sandwich vulnerabilities
+- Calm period parameter manipulation
+- Tick update timing gaps
+- Share calculation edge cases
+- Price overflow conditions
+- Storage gap requirements
+- Upgradeable contract initialization
+
+### 20. Silo Finance Multi-Market Patterns
+- Market deposit cap coordination failures
+- Reward timing with totalSupply updates
+- Zero-reverting token market management
+- Slippage protection gaps
+- Fee share minting order issues
+- Market rounding exploitation vectors
+
+### 21. Liquidation Protocol Integration Patterns
+- Cross-protocol liquidation timing issues
+- Liquidator incentive mismatches
+- Bad debt handling differences
+- Oracle dependency variations
+- Collateral valuation discrepancies
+- Partial liquidation support gaps
+- Insurance fund interactions
+- Multi-collateral priority conflicts
+- Flash loan liquidation mechanics
+- Self-liquidation profitability across protocols
+
+### 22. Smart Contract Wallet Integration Patterns
+- ERC1271 signature validation complexities
+- Approved hash vs threshold signature differences
+- Zero-length signature edge cases
+- Signature-based ID generation collisions
+- Multi-signature operation limitations
+- DAO/multisig usability constraints
+
+## Audit Checklist
+
+### State Management
+- [ ] All state updates follow CEI pattern
+- [ ] No assumptions about external call success
+- [ ] Proper access control on critical functions
+- [ ] State consistency after each operation
+- [ ] Reentrancy guards where needed
+- [ ] Self-transfer handling
+- [ ] Yield position state tracking
+- [ ] Auto redemption state management
+- [ ] Storage packing boundary checks
+- [ ] Index calculations across storage slots
+- [ ] Hook state isolation
+- [ ] Cross-contract re-entrancy prevention
+- [ ] Delegated operation owner tracking
+- [ ] Multi-phase state consistency
+- [ ] Phase transition handling
+- [ ] Range position state tracking
+- [ ] Fee accumulation accounting
+- [ ] Cross-closure state isolation
+- [ ] Strategy deployment amount tracking
+- [ ] Multi-strategy state synchronization
+- [ ] Reward state update ordering
+- [ ] Liquidation state consistency
+- [ ] Interest accrual tracking
+- [ ] Position action state handling
+- [ ] Flash loan state management
+- [ ] CDP vault position tracking
+- [ ] Lever operation state consistency
+- [ ] yDUSD vault totalSupply synchronization
+- [ ] Discount fee state updates
+- [ ] FundingRateArbitrage index consistency
+- [ ] Withdrawal request state management
+- [ ] Lien token bearer asset tracking
+- [ ] Clearing house settlement state
+- [ ] Public vault slope consistency
+- [ ] Commitment replay prevention
+- [ ] Auction state tracking
+- [ ] Buyout state validation
+- [ ] Epoch processing consistency
+- [ ] Withdraw reserve management
+- [ ] Storage vs memory parameter usage
+- [ ] GMX reward state management
+- [ ] Platform migration state tracking
+- [ ] Dynamic emission rate tracking
+- [ ] Exchange rate state updates (PoolTogether)
+- [ ] Delegation state consistency (PoolTogether)
+- [ ] Collateralization state tracking (PoolTogether)
+- [ ] Reserve injection tracking (PoolTogether)
+- [ ] TWAB observation management (PoolTogether)
+- [ ] Prize distribution state (PoolTogether)
+- [ ] Tier state transitions (PoolTogether)
+- [ ] Series creation state management (Sense)
+- [ ] Tick state consistency (Beefy)
+- [ ] Multi-market state coordination (Silo)
+- [ ] Fee accrual before reward claims (Silo)
+- [ ] Ownership transfer state validation
+- [ ] Input validation state checks
+- [ ] Liquidation state transitions
+- [ ] Bad debt state tracking
+
+### Token Handling
+- [ ] Balance checks for actual received amounts
+- [ ] Support for non-standard tokens documented
+- [ ] No hardcoded assumptions about decimals
+- [ ] Proper handling of token callbacks
+- [ ] Allowance handling for approve/transferFrom
+- [ ] Downcast overflow protection
+- [ ] Native vs WETH handling
+- [ ] Tokens >18 decimals support
+- [ ] Correct swap path configuration
+- [ ] Weight calculations for all token indices
+- [ ] Safe transfer validation
+- [ ] Token hook handling (ERC777)
+- [ ] Fee-on-transfer token support
+- [ ] Vault fee consideration
+- [ ] Multi-token balance tracking
+- [ ] DAI permit special handling
+- [ ] Decimal normalization in strategies
+- [ ] Reward token fee deduction
+- [ ] Token scale application
+- [ ] Low decimal token handling
+- [ ] Position action token routing
+- [ ] Native ETH in swaps
+- [ ] Direct minting to vaults
+- [ ] Arbitrary token transfer prevention
+- [ ] Blocklist token handling (USDT/USDC)
+- [ ] Bearer asset transfer risks
+- [ ] Zero transfer revert handling
+- [ ] Token approval validation
+- [ ] Minimum deposit decimal scaling
+- [ ] GMX whitelisted token handling
+- [ ] Platform approval updates
+- [ ] vGMX/vGLP non-transferable handling
+- [ ] Prize token handling (PoolTogether)
+- [ ] Asset/share conversion accuracy (PoolTogether)
+- [ ] Yield vault token compatibility (PoolTogether)
+- [ ] Token transfer return value checks (Sense)
+- [ ] Allowance removal on router updates (Beefy)
+- [ ] Zero-reverting approval handling (Silo)
+- [ ] Liquidation token handling
+
+### Mathematical Operations
+- [ ] No unchecked arithmetic operations
+- [ ] Rounding directions favor protocol
+- [ ] Precision loss minimized
+- [ ] Division by zero prevented
+- [ ] Overflow/underflow protection
+- [ ] No division before multiplication
+- [ ] Proper decimal scaling
+- [ ] Safe signed/unsigned conversions
+- [ ] Time-based calculation overflow checks
+- [ ] Extreme ratio handling
+- [ ] Fee calculation bounds (≤100%)
+- [ ] Timestamp overflow handling
+- [ ] Correct rounding in preview functions
+- [ ] Yield calculation accuracy
+- [ ] Efficiency factor calculations
+- [ ] Target value bounds checking
+- [ ] Share inflation prevention
+- [ ] Strategy return value handling
+- [ ] Interest calculation consistency
+- [ ] Liquidation penalty application
+- [ ] Loss calculation accuracy
+- [ ] Flash loan fee calculations
+- [ ] Position action amount calculations
+- [ ] CDP interest accrual formulas
+- [ ] Discount fee calculations
+- [ ] Collateral ratio calculations
+- [ ] Index calculation precision
+- [ ] Rounding exploitation prevention
+- [ ] Slope calculation accuracy
+- [ ] YIntercept underflow prevention
+- [ ] Liquidation price calculations
+- [ ] Compound vs simple interest
+- [ ] Buyout debt validation
+- [ ] Withdraw ratio precision
+- [ ] Dynamic emission rate calculations
+- [ ] Small position reward rounding
+- [ ] Zero share calculation handling
+- [ ] Exchange rate calculations (PoolTogether)
+- [ ] Prize size calculations (PoolTogether)
+- [ ] Tier odds accuracy (PoolTogether)
+- [ ] TWAB calculation precision (PoolTogether)
+- [ ] Fee calculation precision (PoolTogether)
+- [ ] Safe casting for all conversions (PoolTogether)
+- [ ] ERC4626 rounding compliance (Sense)
+- [ ] Price overflow protection (Beefy)
+- [ ] Fee remainder handling (Beefy)
+- [ ] Market rounding exploitation (Silo)
+- [ ] Liquidation calculation accuracy
+- [ ] Precision scaling consistency
+- [ ] Meta vault totalAssets only counts owned shares
+- [ ] Yield-bearing vault positions properly valued
+- [ ] Direct strategy deposits cannot affect share price
+- [ ] Nested vault accounting maintains invariants
+
+### External Interactions
+- [ ] Use call() instead of transfer() for ETH
+- [ ] External call failure handling
+- [ ] Gas considerations for all operations
+- [ ] Proper event emission
+- [ ] Signature replay protection
+- [ ] DEX interaction validation
+- [ ] Slippage protection
+- [ ] Oracle manipulation resistance
+- [ ] API response validation
+- [ ] Stale oracle data handling
+- [ ] Callback implementation verification
+- [ ] Hook permission validation
+- [ ] Cross-chain message validation
+- [ ] Vault pause state handling
+- [ ] Fee payment validation
+- [ ] Strategy approval management
+- [ ] External protocol pause handling
+- [ ] Flash loan integration security
+- [ ] Permit vulnerability handling
+- [ ] Chainlink function deprecation
+- [ ] Position action external calls
+- [ ] ERC4626 operation security
+- [ ] Discount trigger validation
+- [ ] Arbitrary call prevention
+- [ ] Whitelisted contract validation
+- [ ] Seaport integration security
+- [ ] Clearing house call validation
+- [ ] Dutch auction integration
+- [ ] Flash action callback security
+- [ ] Private vault payment handling
+- [ ] GMX protocol integration
+- [ ] Uniswap V3 parameter validation
+- [ ] Compound function MEV protection
+- [ ] Hook gas limits (PoolTogether)
+- [ ] Hook error handling (PoolTogether)
+- [ ] Draw manager validation (PoolTogether)
+- [ ] Yield vault integration (PoolTogether)
+- [ ] Claimer integration (PoolTogether)
+- [ ] TWAB controller calls (PoolTogether)
+- [ ] Series pool creation validation (Sense)
+- [ ] Deadline parameter validation (Beefy)
+- [ ] Slippage protection on all swaps (Beefy)
+- [ ] Market maxDeposit checks (Silo)
+- [ ] Liquidation protocol calls
+- [ ] Oracle price freshness checks
+- [ ] Permit2 witness hash uses EIP-712 struct encoding
+- [ ] Permit2 type strings include all required components
+- [ ] Witness validation compatible with standard signing libraries
+- [ ] EIP-712 type hash computed correctly (not using encodePacked unnecessarily)
+- [ ] IDs not solely derived from signatures when using ERC1271
+- [ ] Permit2 witness hash uses EIP-712 struct encoding
+- [ ] Permit2 type strings include all required components
+- [ ] Witness validation compatible with standard signing libraries
+- [ ] Depositor/signer relationship validated
+- [ ] Protection against malicious ERC1271 contracts
+- [ ]  ERC1271 zero-length signature handling
+- [ ] Smart contract wallet approved hash support
+- [ ] Unique ID generation with contract signatures
+- [ ] Multiple concurrent operations for SC wallets
+
+### Edge Cases
+- [ ] Zero amount deposits/withdrawals
+- [ ] Maximum value operations
+- [ ] Empty vault scenarios
+- [ ] Rapid deposit/withdraw sequences
+- [ ] Contract pause/unpause transitions
+- [ ] Final user withdrawal
+- [ ] Single user scenarios
+- [ ] Yield position edge cases
+- [ ] Auto redemption edge cases
+- [ ] Concentrated liquidity edge cases
+- [ ] Storage boundary conditions
+- [ ] Weight at minimum thresholds
+- [ ] Queued withdrawal expiry
+- [ ] Hook implementation edge cases
+- [ ] Below minimum share deposits
+- [ ] Phase transition edge cases
+- [ ] Range out-of-bounds scenarios
+- [ ] Cross-closure arbitrage
+- [ ] First depositor scenarios
+- [ ] Reserve balance edge cases
+- [ ] Last strategy removal
+- [ ] Zero asset strategy handling
+- [ ] Bad debt liquidation scenarios
+- [ ] Zero rate quota periods
+- [ ] Partial liquidation edge cases
+- [ ] Array growth limits
+- [ ] Hardcoded time boundaries
+- [ ] Position action edge cases
+- [ ] CDP liquidation boundaries
+- [ ] Flash loan amount limits
+- [ ] yDUSD vault empty state
+- [ ] Discount threshold edge cases
+- [ ] Short position minimum amounts
+- [ ] FundingRateArbitrage inflated index
+- [ ] Interest rate edge conditions
+- [ ] Liquidation overflow scenarios
+- [ ] Single borrower liquidation
+- [ ] Refinancing edge cases
+- [ ] Auction expiry scenarios
+- [ ] Commitment edge cases
+- [ ] Buyout validation limits
+- [ ] Epoch boundary conditions
+- [ ] Settlement edge cases
+- [ ] Non-standard token amounts
+- [ ] GMX cooldown edge cases
+- [ ] Zero totalSupply scenarios
+- [ ] Small position calculations
+- [ ] Dynamic emission rate transitions
+- [ ] MaxWithdraw with penalties
+- [ ] Maturity rate vs exchange rate edge cases
+- [ ] Protocol function interface mismatches
+- [ ] Multi-protocol withdraw edge cases
+- [ ] Zero amount strategy operations
+- [ ] First deposit attacks (PoolTogether)
+- [ ] Exchange rate edge cases (PoolTogether)
+- [ ] Zero withdrawable assets (PoolTogether)
+- [ ] Delegation edge cases (PoolTogether)
+- [ ] TWAB time range boundaries (PoolTogether)
+- [ ] Tier expansion limits (PoolTogether)
+- [ ] Maximum tiers reached (PoolTogether)
+- [ ] Single canary claim (PoolTogether)
+- [ ] Precision loss scenarios (PoolTogether)
+- [ ] Maturity conflicts (Sense)
+- [ ] Small deposit reverts (Sense)
+- [ ] MIN/MAX tick boundaries (Beefy)
+- [ ] Zero share minting (Beefy)
+- [ ] Share recycling (Beefy)
+- [ ] Multi-market edge cases (Silo)
+- [ ] Empty input array scenarios
+- [ ] Matching input edge cases
+- [ ] Unchecked return value scenarios
+- [ ] Liquidation edge cases
+- [ ] Single liquidator scenarios
+
+### Liquidation-Specific Checks
+- [ ] Liquidation only after default/undercollateralization
+- [ ] Borrower can always repay before liquidation
+- [ ] Grace period after unpausing/token re-allowance
+- [ ] Liquidation incentives properly set
+- [ ] Small positions have liquidation incentive
+- [ ] Profitable users cannot withdraw all collateral
+- [ ] Bad debt handling mechanism exists
+- [ ] Partial liquidation handles bad debt correctly
+- [ ] No liquidation DoS via small positions
+- [ ] No liquidation DoS via front-running
+- [ ] No liquidation DoS via pending actions
+- [ ] No liquidation DoS via callbacks
+- [ ] Yield vault collateral properly seized
+- [ ] Insurance fund overflow handling
+- [ ] Fixed bonus doesn't cause reverts
+- [ ] Multi-collateral liquidation priority
+- [ ] Health score improves after liquidation
+- [ ] Self-liquidation not profitable
+- [ ] Oracle manipulation resistance
+- [ ] Correct decimal handling in calculations
+- [ ] Protocol fees don't block liquidation
+- [ ] Cross-protocol liquidation timing
+- [ ] Flash loan liquidation support
+
+### Additional Security Checks
+- [ ] Hardcoded addresses validated for target network
+- [ ] Series creation conflict handling
+- [ ] Proportional yield distribution in exit functions
+- [ ] EIP-4626 rounding compliance
+- [ ] Public approval function protection
+- [ ] Minimum first deposit validation
+- [ ] Admin functions have calm period checks (Beefy)
+- [ ] Slippage protection on all swaps (Beefy)
+- [ ] Fee rounding handled correctly (Beefy)
+- [ ] Allowances removed on router updates (Beefy)
+- [ ] Tick boundaries handled in calm checks (Beefy)
+- [ ] _setTicks called before liquidity deployment (Beefy)
+- [ ] Zero share/amount checks after calculations (Beefy)
+- [ ] Price calculations handle full range (Beefy)
+- [ ] Proper deadline parameters (Beefy)
+- [ ] Storage gaps in upgradeable contracts (Beefy)
+- [ ] disableInitializers in constructors (Beefy)
+- [ ] Parameter bounds enforcement (Beefy)
+- [ ] End-of-life token recovery (Beefy)
+- [ ] Market maxDeposit coordination (Silo)
+- [ ] Reward timing with fee accrual (Silo)
+- [ ] Zero approval token handling (Silo)
+- [ ] Ownership transfer validation
+- [ ] Input matching validation
+- [ ] Empty array validation
+- [ ] Return value checking
+- [ ] Liquidation-specific security measures
+- [ ] Precision loss prevention measures
+
+## Invariant Analysis
+
+When analyzing vault implementations, identify and attempt to break these common invariants:
+
+### Core Vault Invariants
+- [ ] Total shares * share price = total assets (accounting for rounding)
+- [ ] Sum of user balances = total supply
+- [ ] Assets can only increase through deposits or positive yield
+- [ ] Shares can only be created through minting/deposits
+- [ ] No user can withdraw more than they deposited + earned yield
+- [ ] Vault token balance >= sum of all user deposits
+- [ ] Exchange rate can increase from collateralized state (PoolTogether)
+- [ ] Collateralized vaults accept deposits (PoolTogether)
+- [ ] Market balances match internal accounting (Silo)
+- [ ] Meta vault totalAssets = Σ(strategy.convertToAssets(strategy.balanceOf(this)))
+- [ ] Direct deposits to strategies don't affect meta vault share price
+- [ ] Parent vault share price reflects child vault appreciation
+
+### ERC4626 Specific Invariants
+- [ ] convertToShares(convertToAssets(shares)) ≈ shares
+- [ ] previewDeposit returns shares that will actually be minted
+- [ ] previewWithdraw returns shares needed for asset amount
+- [ ] maxDeposit/maxMint respect actual protocol limits
+- [ ] Rounding always favors the vault over users
+- [ ] Max functions return 0 when operations disabled
+- [ ] Preview functions don't revert
+- [ ] Preview functions follow EIP-4626 rounding direction
+
+### Multi-Vault System Invariants
+- [ ] Total assets across vaults = sum of individual vault assets
+- [ ] No value created or destroyed during cross-vault operations
+- [ ] Phase transitions preserve total value
+- [ ] Withdrawal availability matches deposited assets
+- [ ] Market caps respected across all operations (Silo)
+
+### Yield Generation Invariants
+- [ ] Yield can only be positive or zero (no principal loss)
+- [ ] Yield distribution proportional to share ownership
+- [ ] Unclaimed yield remains in protocol
+- [ ] Yield calculations consistent across time periods
+- [ ] Yield fees only mintable up to available amount
+- [ ] Fee recipients receive proportional rewards (Silo)
+
+### Liquidation/CDP Invariants
+- [ ] Collateral ratio always maintained above minimum
+- [ ] Liquidation only possible when position unsafe
+- [ ] Liquidation penalties properly applied
+- [ ] Bad debt properly socialized
+- [ ] No profitable self-liquidation
+- [ ] Health score improves after liquidation
+- [ ] Liquidation incentives > gas costs
+- [ ] Partial liquidations don't leave unhealthier positions
+- [ ] Insurance fund covers bad debt when available
+
+### Cross-Chain Invariants
+- [ ] Token supply conserved across chains
+- [ ] No double-spending across bridges
+- [ ] Message ordering preserved
+- [ ] State consistency across chains
+
+### PoolTogether Specific Invariants
+- [ ] Prize token balance = accounted liquidity + reserve
+- [ ] Sum of individual TWABs ≤ total supply TWAB
+- [ ] Delegation doesn't change total delegated amount
+- [ ] Tier odds follow intended distribution
+- [ ] Vault contributions sum to total contributions
+- [ ] No tokens lost to sponsorship address

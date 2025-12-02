@@ -1,0 +1,1000 @@
+
+### 215. Bearer Asset Transfer Exploit (Astaria)
+**Pattern**: Lien tokens act as bearer assets, allowing malicious lenders to block loan repayments by transferring to blocklisted addresses.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _getPayee(LienStorage storage s, uint256 lienId) internal view returns (address) {
+    return s.lienMeta[lienId].payee != address(0) ? s.lienMeta[lienId].payee : ownerOf(lienId);
+}
+
+// Payments sent to lien token owner
+function _payment(LienStorage storage s, Stack[] memory stack, ...) {
+    s.TRANSFER_PROXY.tokenTransferFrom(stack.lien.token, payer, payee, amount);
+}
+```
+
+**Attack Scenario**:
+1. Lender offers loan in USDT/USDC
+2. Transfers lien token to USDC blocklist address
+3. Borrower cannot repay, loan goes to liquidation
+4. All auction bids fail due to blocklist
+5. Liquidator claims collateral for free
+
+**Impact**: Borrower loses collateral, other lenders lose funds.
+
+**Mitigation**: Pull-based payment system or token allowlist.
+
+### 216. Clearing House Arbitrary Settlement (Astaria)
+**Pattern**: ClearingHouse.safeTransferFrom can be called by anyone with arbitrary parameters, allowing collateral theft.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function safeTransferFrom(address from, address to, uint256 identifier, uint256 amount, bytes calldata data) {
+    // No validation that auction has occurred
+    address paymentToken = bytes32(identifier).fromLast20Bytes();
+    _execute(from, to, paymentToken, amount);
+    // Deletes all liens and burns collateral token!
+}
+```
+
+**Impact**: Anyone can wipe collateral state with zero payment.
+
+**Mitigation**: Change AND to OR in settleAuction validation:
+```solidity
+if (s.collateralIdToAuction[collateralId] == bytes32(0) ||
+    ERC721(s.idToUnderlying[collateralId].tokenContract).ownerOf(...) != s.clearingHouse[collateralId]) {
+    revert InvalidCollateralState(InvalidCollateralStates.NO_AUCTION);
+}
+```
+
+### 217. Vault Strategy Bypass (Astaria)
+**Pattern**: Borrowers can bypass vault's validation and take loans without proper authorization.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    if (msg.sender != holder && receiver != holder && receiver != operator && !CT.isApprovedForAll(holder, msg.sender)) {
+        revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);
+    }
+    // Passes if receiver == holder, even if msg.sender unauthorized!
+}
+```
+
+**Attack**: Attacker sets receiver to collateral owner address, bypassing authorization.
+
+**Impact**: Unauthorized loans against any collateral.
+
+**Mitigation**: Separate authorization checks for msg.sender and receiver.
+
+### 218. Missing Strategy Deadline Validation (Astaria)
+**Pattern**: VaultImplementation doesn't check strategy deadline, allowing expired strategies.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    // Missing: if (block.timestamp > params.lienRequest.strategy.deadline) revert Expired();
+    // Only validates signature, not deadline
+}
+```
+
+**Impact**: Borrowers can use outdated strategies with potentially unfavorable terms.
+
+**Mitigation**: Add deadline validation in vault commitment validation.
+
+### 219. Liquidation InitialAsk Overflow (Astaria)
+**Pattern**: liquidationInitialAsk > 2^88-1 causes liquidation to revert, permanently locking collateral.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+auctionData.startAmount = stack[0].lien.details.liquidationInitialAsk.safeCastTo88();
+// Reverts if liquidationInitialAsk > type(uint88).max
+```
+
+**Impact**: Collateral permanently locked, cannot be liquidated.
+
+**Mitigation**: Use uint256 for auction startAmount.
+
+### 220. Strategist Fee Overflow Attack (Astaria)
+**Pattern**: Extremely high vault fees cause repayment to revert.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+uint88 feeInShares = convertToShares(fee).safeCastTo88();
+// Reverts if fee converts to shares > uint88 max
+```
+
+**Attack**: Strategist sets fee to 1e13, causing overflow.
+
+**Impact**: Borrowers cannot repay, forced liquidation.
+
+**Mitigation**: Validate vault fee within reasonable range on creation.
+
+### 221. Liquidation DOS via liquidationInitialAsk (Astaria)
+**Pattern**: Borrowers can block future borrowing by setting low liquidationInitialAsk.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+for (uint256 i = stack.length; i > 0; ) {
+    potentialDebt += _getOwed(newStack[j], newStack[j].point.end);
+    if (potentialDebt > newStack[j].lien.details.liquidationInitialAsk) {
+        revert InvalidState(InvalidStates.INITIAL_ASK_EXCEEDED);
+    }
+}
+```
+
+**Attack**: Set liquidationInitialAsk equal to loan amount, blocking all future loans.
+
+**Impact**: Borrower DOS from taking additional loans.
+
+**Mitigation**: Only check total stack debt against position 0 liquidationInitialAsk.
+
+### 222. Public Vault Slope Corruption (Astaria)
+**Pattern**: Buyout doesn't increase destination vault's slope.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function buyoutLien(Stack[] calldata stack, uint8 position, ...) {
+    // Burns old lien, decreases old vault slope
+    if (_isPublicVault(s, payee)) {
+        IPublicVault(payee).handleBuyoutLien(...);
+    }
+    // Creates new lien but doesn't increase new vault slope!
+}
+```
+
+**Impact**: LPs lose interest income, borrowers don't pay interest.
+
+**Mitigation**: Increase slope when creating new lien in buyout.
+
+### 223. Collateral Recovery After Liquidation (Astaria)
+**Pattern**: Liquidated collateral can be used to take new loans.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function liquidatorNFTClaim(OrderParameters memory params) {
+    // Transfers NFT but doesn't settle auction
+    ERC721(token).safeTransferFrom(address(this), liquidator, tokenId);
+    // CollateralToken still exists, can be used for new loans!
+}
+```
+
+**Impact**: Vault drained by taking loans without real collateral.
+
+**Mitigation**: Settle auction in liquidatorNFTClaim.
+
+### 224. Lien Transfer to Public Vault Bypass (Astaria)
+**Pattern**: Attacker can transfer liens to uncreated public vault addresses.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function transferFrom(address from, address to, uint256 id) {
+    if (_isPublicVault(s, to)) {
+        revert InvalidState(InvalidStates.PUBLIC_VAULT_RECIPIENT);
+    }
+    // But vault might not exist yet!
+}
+```
+
+**Attack**: Transfer lien to predicted public vault address before creation.
+
+**Impact**: Borrower cannot repay, forced liquidation.
+
+**Mitigation**: Add `require(to.code.length > 0)` for vault transfers.
+
+### 225. Withdraw Reserve Calculation Error (Astaria)
+**Pattern**: processEpoch incorrectly sets withdrawReserve to 0 when totalAssets <= expected.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+if (totalAssets() > expected) {
+    s.withdrawReserve = (totalAssets() - expected).mulWadDown(s.liquidationWithdrawRatio).safeCastTo88();
+} else {
+    s.withdrawReserve = 0; // Wrong! Should still send proportional amount
+}
+```
+
+**Impact**: WithdrawProxy receives no funds despite having claims.
+
+**Mitigation**: Always calculate proportional withdraw reserve.
+
+### 226. YIntercept Underflow in processEpoch (Astaria)
+**Pattern**: Large withdrawals cause yIntercept calculation to underflow.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+_setYIntercept(s, s.yIntercept - totalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18));
+// Underflows if most users withdraw
+```
+
+**Impact**: Epoch processing fails, users cannot withdraw.
+
+**Mitigation**: Call accrue() before processEpoch to update yIntercept.
+
+### 227. Decimal Mismatch in Liquidation Pricing (Astaria)
+**Pattern**: Non-18 decimal assets cause incorrect auction starting prices.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+startingPrice: stack[0].lien.details.liquidationInitialAsk, // Assumes 18 decimals
+settlementToken: stack[position].lien.token, // May be 6 decimals (USDC)
+```
+
+**Impact**: Auction starts at 1e12x intended price for USDC.
+
+**Mitigation**: Scale liquidationInitialAsk by token decimals.
+
+### 228. Refinancing Attack on Liquidation (Astaria)
+**Pattern**: Malicious refinancing just before liquidation with low initialAsk.
+
+**Attack Scenario**:
+1. User takes 3 ETH loan with 100 ETH liquidationInitialAsk
+2. Before liquidation, attacker refinances with 0.1 ETH initialAsk
+3. NFT liquidated for far below fair value
+
+**Impact**: Borrower loses NFT value due to manipulated auction price.
+
+**Mitigation**: Prevent refinancing close to liquidation or maintain minimum initialAsk.
+
+### 229. Commitment Replay Attack (Astaria)
+**Pattern**: Same commitment signature can be used multiple times to obtain additional loans.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    // Only validates signature, doesn't track if commitment was already used
+    address recovered = ecrecover(
+        keccak256(_encodeStrategyData(s, params.lienRequest.strategy, params.lienRequest.merkle.root)),
+        params.lienRequest.v,
+        params.lienRequest.r,
+        params.lienRequest.s
+    );
+}
+```
+
+**Attack Procedure**:
+1. User takes loan via Router with valid commitment
+2. User manually transfers NFT to CollateralToken
+3. Calls commitToLien directly on vault with same commitment
+4. Changes strategy.vault to generate new lienId
+5. Adds previous transaction to stack to pass validation
+
+**Impact**: Multiple loans using single approved commitment.
+
+**Mitigation**: Add nonce system to track used commitments.
+
+### 230. Buyout Lien Liquidation Ask Validation Error (Astaria)
+**Pattern**: Buyout validation uses old stack instead of new stack after replacement.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _buyoutLien(LienStorage storage s, ILienToken.LienActionBuyout calldata params) internal {
+    // ... buyout logic ...
+    for (uint256 i = params.encumber.stack.length; i > 0; ) {
+        potentialDebt += _getOwed(params.encumber.stack[j], params.encumber.stack[j].point.end);
+        if (potentialDebt > params.encumber.stack[j].lien.details.liquidationInitialAsk) { // Uses old stack!
+            revert InvalidState(InvalidStates.INITIAL_ASK_EXCEEDED);
+        }
+    }
+    // ... replace with new lien ...
+    newStack = _replaceStackAtPositionWithNewLien(s, params.encumber.stack, params.position, newLien, ...);
+}
+```
+
+**Impact**: Buyout may succeed with insufficient liquidationInitialAsk for covering total debt.
+
+**Mitigation**: Validate against newStack after replacement.
+
+### 231. Settlement Check Logic Error (Astaria)
+**Pattern**: AND condition should be OR in settleAuction validation.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function settleAuction(uint256 collateralId) public {
+    if (
+        s.collateralIdToAuction[collateralId] == bytes32(0) &&
+        ERC721(s.idToUnderlying[collateralId].tokenContract).ownerOf(
+            s.idToUnderlying[collateralId].tokenId
+        ) != s.clearingHouse[collateralId]
+    ) {
+        revert InvalidCollateralState(InvalidCollateralStates.NO_AUCTION);
+    }
+}
+```
+
+**Impact**: ClearingHouse.safeTransferFrom can execute even without auction.
+
+**Mitigation**: Change AND to OR condition.
+
+### 232. Router Approval Requirement Mismatch (Astaria)
+**Pattern**: commitToLiens requires approval for all instead of individual NFT approval.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    if (
+        msg.sender != holder &&
+        receiver != holder &&
+        receiver != operator && // Should check msg.sender == operator
+        !CT.isApprovedForAll(holder, msg.sender)
+    ) {
+        revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);
+    }
+}
+```
+
+**Impact**: Standard NFT approval workflow doesn't work, forcing users to approve entire collection.
+
+**Mitigation**: Change to `msg.sender != operator`.
+
+### 233. Self-Liquidation Incentive Exploit (Astaria)
+**Pattern**: Borrowers can liquidate themselves to capture liquidation fees.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function canLiquidate(ILienToken.Stack memory stack) public view returns (bool) {
+    return (stack.point.end <= block.timestamp ||
+        msg.sender == s.COLLATERAL_TOKEN.ownerOf(stack.lien.collateralId));
+}
+```
+
+**Attack Scenario**:
+1. Borrower takes 10 WETH loan
+2. Before loan expires, borrower calls liquidate()
+3. Borrower set as liquidator, gets 13% liquidation fee
+4. Keeps original 10 WETH plus 1.3 WETH bonus
+
+**Impact**: Lenders suffer losses while borrowers profit from defaults.
+
+**Mitigation**: Prevent self-liquidation until loans are publicly liquidatable.
+
+### 234. Private Vault ERC777 Griefing (Astaria)
+**Pattern**: Private vault owners can refuse loan repayments via ERC777 callbacks.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _payment(LienStorage storage s, Stack[] memory stack, ...) internal {
+    // For private vaults, payment goes to owner
+    address payee = _getPayee(s, lienId);
+    s.TRANSFER_PROXY.tokenTransferFrom(stack.lien.token, payer, payee, amount);
+}
+
+function recipient() public view returns (address) {
+    if (IMPL_TYPE() == uint8(IAstariaRouter.ImplementationType.PublicVault)) {
+        return address(this);
+    } else {
+        return owner(); // Private vault sends to owner
+    }
+}
+```
+
+**Attack**: Private vault owner reverts in ERC777 tokensReceived callback.
+
+**Impact**: Borrower forced into liquidation despite attempting repayment.
+
+**Mitigation**: Pull-based payment system for private vaults.
+
+### 235. Zero Transfer Revert DoS (Astaria)
+**Pattern**: Some tokens revert on zero-value transfers causing DoS.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function transferWithdrawReserve() public {
+    uint256 withdrawBalance = ERC20(asset()).balanceOf(address(this));
+    // If balance is 0 and token reverts on zero transfer
+    ERC20(asset()).safeTransfer(currentWithdrawProxy, withdrawBalance);
+}
+```
+
+**Attack**:
+1. User A calls commitToLien, pending in mempool
+2. User B front-runs with transferWithdrawReserve()
+3. If vault has no balance and token reverts on zero transfer
+4. User A's transaction reverts in _beforeCommitToLien
+
+**Impact**: DoS of commitToLien and updateVaultAfterLiquidation.
+
+**Mitigation**: Check balance > 0 before transfer.
+
+### 236. Missing Pause Check on Private Vault Deposit (Astaria)
+**Pattern**: Private vault deposits bypass pause checks.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+// PublicVault has whenNotPaused
+function deposit(uint256 amount, address receiver)
+    public
+    override(ERC4626Cloned)
+    whenNotPaused
+    returns (uint256) { ... }
+
+// But Vault (private) doesn't
+function deposit(uint256 amount, address receiver)
+    public
+    virtual
+    returns (uint256) { // No whenNotPaused!
+    VIData storage s = _loadVISlot();
+    require(s.allowList[msg.sender] && receiver == owner());
+    ERC20(asset()).safeTransferFrom(msg.sender, address(this), amount);
+    return amount;
+}
+```
+
+**Impact**: Private vaults can receive deposits even when protocol is paused/shutdown.
+
+**Mitigation**: Add whenNotPaused modifier to private vault deposit.
+
+### 237. Strategist Interest Reward Miscalculation (Astaria)
+**Pattern**: Strategist rewards calculated on full loan amount instead of payment amount.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _payment(LienStorage storage s, Stack[] memory activeStack, ...) internal {
+    if (isPublicVault) {
+        IPublicVault(lienOwner).beforePayment(
+            IPublicVault.BeforePaymentParams({
+                interestOwed: owed - stack.point.amount,
+                amount: stack.point.amount, // Should be payment amount!
+                lienSlope: calculateSlope(stack)
+            })
+        );
+    }
+}
+```
+
+**Impact**: Strategists earn excessive rewards even on minimal payments.
+
+**Mitigation**: Pass actual payment amount instead of stack.point.amount.
+
+### 238. Fee-on-Transfer Token Lock (Astaria)
+**Pattern**: PublicVault accounting breaks with fee-on-transfer tokens.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function deposit(uint256 assets, address receiver) public virtual returns (uint256 shares) {
+    ERC20(asset()).safeTransferFrom(msg.sender, address(this), assets);
+    _mint(receiver, shares);
+    // If token takes fee, actual received < assets
+    // But shares minted based on assets
+}
+```
+
+**Impact**: Later withdrawers cannot redeem as vault has less assets than expected.
+
+**Mitigation**: Calculate actual received amount or whitelist tokens.
+
+### 239. Interest Compounding on Partial Payments (Astaria)
+**Pattern**: Each partial payment adds interest to principal, compounding debt.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _payment(LienStorage storage s, Stack[] memory activeStack, ...) internal {
+    uint256 owed = _getOwed(stack, block.timestamp); // principal + interest
+    stack.point.amount = owed.safeCastTo88(); // Updates principal to include interest
+    stack.point.last = block.timestamp.safeCastTo40();
+    
+    if (stack.point.amount > amount) {
+        stack.point.amount -= amount.safeCastTo88(); // Remaining includes compounded interest
+    }
+}
+```
+
+**Impact**: Despite claiming simple interest, protocol charges compound interest.
+
+**Mitigation**: Track accrued interest separately from principal.
+
+### 240. Liquidation During Auction Window (Astaria)
+**Pattern**: Adversary can settle auction with minimal payment using dutch auction.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _generateValidOrderParameters(...) internal returns (OrderParameters memory) {
+    considerationItems[0] = ConsiderationItem(
+        ItemType.ERC20,
+        settlementToken,
+        uint256(0),
+        prices[0], // Starting price
+        prices[1], // Ending price: 1000 wei
+        payable(address(s.clearingHouse[collateralId]))
+    );
+}
+```
+
+**Attack**:
+1. Dutch auction price drops to 1000 wei
+2. Attacker transfers 1001 wei to ClearingHouse
+3. Calls safeTransferFrom to settle auction
+4. NFT claimed by liquidator, lenders lose
+
+**Mitigation**: Validate auction completion and NFT transfer.
+
+### 241. Public Vault yIntercept Overflow (Astaria)
+**Pattern**: Unchecked addition can overflow yIntercept.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _increaseYIntercept(VaultData storage s, uint256 amount) internal {
+    s.yIntercept += amount.safeCastTo88(); // Only 88 bits
+}
+```
+
+**Impact**: totalAssets calculation breaks, preventing withdrawals.
+
+**Mitigation**: Use checked arithmetic or larger storage type.
+
+### 242. Public Vault Slope Overflow (Astaria)
+**Pattern**: High interest rates cause slope overflow.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function afterPayment(uint256 computedSlope) public onlyLienToken {
+    s.slope += computedSlope.safeCastTo48(); // Can overflow with multiple loans
+}
+```
+
+**Impact**: Incorrect totalAssets calculation, broken vault accounting.
+
+**Mitigation**: Remove unchecked blocks, consider larger storage.
+
+### 243. Minimum Deposit Calculation Error (Astaria)
+**Pattern**: Non-18 decimal tokens have excessive minimum deposits.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function minDepositAmount() public view returns (uint256) {
+    if (ERC20(asset()).decimals() == uint8(18)) {
+        return 100 gwei;
+    } else {
+        return 10**(ERC20(asset()).decimals() - 1); // 0.1 tokens regardless of value
+    }
+}
+```
+
+**Impact**: WBTC minimum deposit > $2000, excluding many users.
+
+**Mitigation**: Scale minimum based on decimal count:
+```solidity
+if (decimals < 4) return 10**(decimals - 1);
+else if (decimals < 8) return 10**(decimals - 2);
+else return 10**(decimals - 6);
+```
+
+### 244. ProcessEpoch Overflow in Withdraw Reserve (Astaria)
+**Pattern**: Unchecked multiplication can overflow with arbitrary tokens.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+unchecked {
+    if (totalAssets() > expected) {
+        s.withdrawReserve = (totalAssets() - expected)
+            .mulWadDown(s.liquidationWithdrawRatio)
+            .safeCastTo88();
+    }
+}
+```
+
+**Impact**: ProcessEpoch fails, blocking withdrawals.
+
+**Mitigation**: Remove unchecked block or validate totalAssets magnitude.
+
+### 245. WithdrawProxy Early Redemption (Astaria)
+**Pattern**: Users can redeem before vault transfers withdraw reserves.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+modifier onlyWhenNoActiveAuction() {
+    if (s.finalAuctionEnd != 0) { // 0 before auction starts
+        revert InvalidState(InvalidStates.NOT_CLAIMED);
+    }
+    _;
+}
+
+function redeem(uint256 shares, address receiver, address owner) public onlyWhenNoActiveAuction {
+    if (totalAssets() > 0) { // Can be satisfied by small donation
+        // Allows redemption
+    }
+}
+```
+
+**Attack**: Deposit small amount to WithdrawProxy, enabling early unfair redemption.
+
+**Impact**: Early redeemers get less than fair share.
+
+**Mitigation**: Add explicit flag for when withdrawals are safe.
+
+### 246. Lien Position Deletion Failure (Astaria)
+**Pattern**: Using memory instead of storage prevents lien deletion.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+function _paymentAH(
+    LienStorage storage s,
+    address token,
+    AuctionStack[] memory stack, // Should be storage!
+    uint256 position,
+    uint256 payment,
+    address payer
+) internal returns (uint256) {
+    delete s.lienMeta[lienId]; // Works
+    delete stack[position]; // No effect on storage!
+}
+```
+
+**Impact**: Ghost liens remain in storage after repayment.
+
+**Mitigation**: Change parameter to storage or handle deletion separately.
+
+### 247. Strategist Buyout Griefing (Astaria)
+**Pattern**: Strategist can prevent withdrawals by repeatedly buying out liens.
+
+**Attack Scenario**:
+1. LPs signal withdrawal for epoch
+2. Strategist front-runs transferWithdrawReserve
+3. Calls buyoutLien to consume available funds
+4. WithdrawProxy remains unfunded
+5. Repeat indefinitely
+
+**Impact**: LPs permanently locked from withdrawing.
+
+**Mitigation**: Enforce transferWithdrawReserve before buyout like commitToLien.
+
+### 248. Non-18 Decimal Token Support Issues (Astaria)
+**Pattern**: Multiple calculation errors with non-18 decimal tokens.
+
+**Issues**:
+- PublicVault decimals hardcoded to 18
+- liquidationWithdrawRatio calculations assume 18 decimals
+- WithdrawProxy calculations use 1e18 constants
+- minDepositAmount excessive for low decimal tokens
+
+**Impact**: Vault unusable or broken with USDC, WBTC, etc.
+
+**Mitigation**: Make decimals match underlying token throughout.
+
+### 249. ProcessEpoch YIntercept Underflow (Astaria)
+**Pattern**: High liquidationWithdrawRatio causes underflow.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+_setYIntercept(
+    s,
+    s.yIntercept - totalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18)
+);
+```
+
+**Impact**: ProcessEpoch reverts, blocking epoch transitions.
+
+**Mitigation**: Call accrue() before processEpoch to update yIntercept.
+
+### 250. Liquidation Accounting Gap (Astaria)
+**Pattern**: Missing updateVaultAfterLiquidation prevents proper WithdrawProxy setup.
+
+**Vulnerable Code Example** (Astaria):
+```solidity
+// Liquidation can happen without notifying vault
+// If withdrawProxy not deployed, it never gets auction funds
+```
+
+**Impact**: LPs don't receive liquidation proceeds if epoch boundary is near.
+
+**Mitigation**: Ensure updateVaultAfterLiquidation is always called.
+
+### 251. GMX Cooldown Redemption Blocking (RedactedCartel)
+**Pattern**: GMX's cooldownDuration on GlpManager prevents redemptions if any deposit occurred within the cooldown period.
+
+**Vulnerable Code Example**:
+```solidity
+// GMX GlpManager enforces cooldown
+function _removeLiquidity(...) {
+    require(lastAddedAt[account] + cooldownDuration <= block.timestamp);
+}
+```
+
+**Attack Scenarios**:
+1. Natural blocking: With 10% of GMX users using Pirex, redemptions fail 95% of the time
+2. Griefing attack: Deposit 1 wei every 15 minutes to permanently block redemptions (cost: ~$3.5k/year)
+3. GMX parameter changes: Increasing cooldownDuration to 2 days breaks redemptions
+
+**Impact**: Users cannot withdraw funds from PirexGmx.
+
+**Mitigation**: Reserve specific time ranges for redemption-only periods.
+
+### 252. Dynamic Emission Rate Reward Miscalculation (RedactedCartel)
+**Pattern**: Reward distribution assumes constant emission rates but GMX uses dynamic rates.
+
+**Vulnerable Code Example**:
+```solidity
+// Calculates rewards linearly
+uint256 rewards = globalState.rewards +
+    (block.timestamp - lastUpdate) *
+    lastSupply;
+```
+
+**Real Scenario**:
+- Alice stakes when emission rate is 2 esGMX/sec
+- Bob stakes when rate drops to 1 esGMX/sec
+- Alice receives less rewards than entitled due to linear calculation
+
+**Impact**: Some users lose rewards while others receive extra.
+
+**Mitigation**: Implement RewardPerToken pattern to handle dynamic rates.
+
+### 253. Zero Share Withdrawal Attack (RedactedCartel)
+**Pattern**: Rounding down in share calculation allows free asset withdrawal.
+
+**Vulnerable Code Example**:
+```solidity
+function withdraw(uint256 assets, address receiver, address owner) public {
+    shares = previewWithdraw(assets); // Can round down to 0
+    _burn(owner, shares); // Burns 0 shares
+    asset.safeTransfer(receiver, assets); // Transfers assets
+}
+```
+
+**Attack**: With 1000 WETH total assets and 10 shares total supply, withdrawing 99 WETH rounds to 0 shares.
+
+**Mitigation**: Use rounding up in previewWithdraw:
+```solidity
+uint256 shares = supply == 0 ? assets : assets.mulDivUp(supply, totalAssets());
+```
+
+### 254. Small Position Reward Loss (RedactedCartel)
+**Pattern**: Users with small positions lose all rewards due to rounding.
+
+**Vulnerable Code Example**:
+```solidity
+uint256 amount = (rewardState * userRewards) / globalRewards;
+// If userRewards << globalRewards, amount rounds to 0
+p.userStates[user].rewards = 0; // But rewards cleared anyway
+```
+
+**Impact**: Small depositors permanently lose rewards; malicious users can grief by calling claim for victims.
+
+**Mitigation**:
+- Implement RewardPerToken approach
+- Revert if calculated reward is 0
+
+### 255. GMX Migration Blocking via vGMX/vGLP (RedactedCartel)
+**Pattern**: Direct transfers of non-transferable vester tokens block migration.
+
+**Attack**: Send vGMX or vGLP tokens directly to PirexGmx to permanently prevent:
+```solidity
+function signalTransfer(address _receiver) external {
+    require(IERC20(gmxVester).balanceOf(msg.sender) == 0);
+    require(IERC20(glpVester).balanceOf(msg.sender) == 0);
+}
+```
+
+**Impact**: Protocol migration becomes impossible.
+
+**Note**: Vester tokens override transfer methods to revert, limiting attack to GMX insiders.
+
+### 256. Compound Function Manipulation (RedactedCartel)
+**Pattern**: Public compound function with user-controlled swap parameters enables MEV.
+
+**Vulnerable Code Example**:
+```solidity
+function compound(
+    uint24 fee, // User controls pool selection
+    uint256 amountOutMinimum, // Can be set to 1
+    uint160 sqrtPriceLimitX96,
+    bool optOutIncentive
+) public {
+    gmxAmountOut = SWAP_ROUTER.exactInputSingle({
+        fee: fee, // Attacker chooses illiquid pool
+        amountOutMinimum: amountOutMinimum, // Accepts high slippage
+    });
+}
+```
+
+**Attack**: Route swaps through illiquid pools and sandwich for profit.
+
+**Mitigation**: Use poolFee parameter and on-chain oracle for minimum amounts.
+
+### 257. ERC4626 MaxWithdraw Implementation Error (RedactedCartel)
+**Pattern**: MaxWithdraw doesn't account for withdrawal penalties.
+
+**Vulnerable Code**:
+```solidity
+// In PirexERC4626 (inherited by AutoPxGmx/AutoPxGlp)
+function maxWithdraw(address owner) public view returns (uint256) {
+    return convertToAssets(balanceOf(owner)); // Ignores penalty
+}
+```
+
+**Impact**: Calling withdraw with maxWithdraw amount always reverts.
+
+**Mitigation**: Override in AutoPxGmx/AutoPxGlp:
+```solidity
+function maxWithdraw(address owner) public view override returns (uint256) {
+    uint256 assets = convertToAssets(balanceOf(owner));
+    uint256 penalty = ... // calculate penalty
+    return assets - penalty;
+}
+```
+
+### 258. Platform Update Approval Loss (RedactedCartel)
+**Pattern**: Updating platform address doesn't grant approval to new platform.
+
+**Vulnerable Code**:
+```solidity
+function setPlatform(address _platform) external onlyOwner {
+    platform = _platform; // No approval granted
+}
+```
+
+**Impact**: Deposits fail after platform update.
+
+**Mitigation**:
+```solidity
+function setPlatform(address _platform) external onlyOwner {
+    gmx.safeApprove(platform, 0);
+    gmx.safeApprove(_platform, type(uint256).max);
+    platform = _platform;
+}
+```
+
+### 259. Fee-on-Transfer Token Incompatibility (RedactedCartel)
+**Pattern**: depositGlp assumes received amount equals sent amount.
+
+**Vulnerable Code**:
+```solidity
+t.safeTransferFrom(msg.sender, address(this), tokenAmount);
+deposited = gmxRewardRouterV2.mintAndStakeGlp(
+    token,
+    tokenAmount, // Assumes full amount received
+    minUsdg,
+    minGlp
+);
+```
+
+**Impact**: Transactions revert with FOT tokens like USDT.
+
+**Mitigation**:
+```solidity
+uint256 balanceBefore = t.balanceOf(address(this));
+t.safeTransferFrom(msg.sender, address(this), tokenAmount);
+uint256 actualAmount = t.balanceOf(address(this)) - balanceBefore;
+```
+
+### 260. Direct Reward Claim Bypass (RedactedCartel)
+**Pattern**: Anyone can claim rewards directly, bypassing compound logic and fees.
+
+**Attack Flow**:
+1. Call `PirexRewards.claim(pxGmx, AutoPxGlp)` directly
+2. Rewards sent to vault without compound() execution
+3. No fees calculated or harvested
+4. pxGmx rewards not tracked in _harvest()
+
+**Impact**:
+- Protocol loses fee revenue
+- Users lose pxGmx rewards
+
+**Mitigation**: Track previous balances and detect direct transfers.
+
+### 261. Zero TotalSupply Division (RedactedCartel)
+**Pattern**: _calculateRewards reverts when RewardTracker totalSupply is 0.
+
+**Vulnerable Code**:
+```solidity
+uint256 cumulativeRewardPerToken = r.cumulativeRewardPerToken() +
+    ((blockReward * precision) / r.totalSupply()); // Division by zero
+```
+
+**Impact**: harvest() and claim() become unusable when any RewardTracker is empty.
+
+**Mitigation**: Check totalSupply before division:
+```solidity
+if (r.totalSupply() == 0) return 0;
+```
+
+### 262. Reward Token Mismanagement (RedactedCartel)
+**Pattern**: Mismatch between hardcoded rewards in PirexGmx and configurable rewards in PirexRewards.
+
+**Issue**: Owner can:
+- Remove hardcoded reward tokens
+- Add unsupported tokens
+- Clear reward arrays
+
+**Impact**: Users lose rewards when tokens are misconfigured but state is still cleared.
+
+### 263. Hardcoded Swap Router (RedactedCartel)
+**Pattern**: SWAP_ROUTER address hardcoded for Arbitrum, incompatible with Avalanche.
+
+**Vulnerable Code**:
+```solidity
+IV3SwapRouter public constant SWAP_ROUTER =
+    IV3SwapRouter(0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45);
+```
+
+**Impact**: AutoPxGmx completely broken on Avalanche.
+
+**Mitigation**: Pass router address in constructor.
+
+### 264. GlpManager Slippage During Turbulence (RedactedCartel)
+**Pattern**: Compound accepts user-controlled minUsdg/minGlp parameters.
+
+**Risk**: During price volatility or oracle manipulation, compound value can be lost.
+
+**Mitigation**: Use oracle to calculate minimum amounts instead of user input.
+
+### 265. Migration Reward Loss Window (RedactedCartel)
+**Pattern**: Between completeMigration and PirexRewards producer update, rewards are lost.
+
+**Vulnerable Flow**:
+1. completeMigration() called
+2. AutoPxGmx.compound() → old PirexGmx.claimRewards()
+3. Returns zero rewards, losing user funds
+
+**Mitigation**: Set pirexRewards = address(0) in migrateReward().
+
+### 266. ConfigureGmxState Approval Accumulation (RedactedCartel)
+**Pattern**: Doesn't reset old stakedGmx approval, causing multiple issues.
+
+**Problems**:
+1. Can't call function twice if stakedGmx unchanged
+2. Old contracts retain spending approval
+3. Can't revert to previous stakedGmx addresses
+
+**Mitigation**: Reset old approval before setting new:
+```solidity
+gmx.safeApprove(address(stakedGmx), 0);
+gmx.safeApprove(address(newStakedGmx), type(uint256).max);
+```
+
+### 267. ERC4626 Compliance Violations (RedactedCartel)
+**Pattern**: maxDeposit/maxMint return type(uint256).max regardless of actual limits.
+
+**Issue**: Violates EIP-4626 requirement to not overestimate capacity.
+
+**Mitigation**:
+```solidity
+function maxMint(address) public view virtual returns (uint256) {
+    if (totalSupply >= maxSupply) return 0;
+    return maxSupply - totalSupply;
+}
+```
+
+### 268. Exchange Rate Manipulation Prevention (PoolTogether H-01)
+**Pattern**: Exchange rate calculation incorrectly caps withdrawable assets, preventing rate from ever increasing.
+
+**Vulnerable Code Example** (PoolTogether):
+```solidity
+function _currentExchangeRate() internal view returns (uint256) {
+    uint256 _withdrawableAssets = _yieldVault.maxWithdraw(address(this));
+    
+    if (_withdrawableAssets >  _totalSupplyToAssets) {
+        _withdrawableAssets = _withdrawableAssets - (_withdrawableAssets - _totalSupplyToAssets);
+    }
+    
+    return _withdrawableAssets.mulDiv(_assetUnit, _totalSupplyAmount, Math.Rounding.Down);
+}
+```
+
+**Impact**: Vault cannot recover from under-collateralization; exchange rate permanently stuck.
+
+**Mitigation**: Remove the artificial cap on withdrawable assets.
+
+### 269. Type Casting Overflow in Withdrawals (PoolTogether H-02)
+**Pattern**: Silent downcast from uint256 to uint96 when burning shares.
+
+**Vulnerable Code Example** (PoolTogether):
+```solidity
+function _burn(address _owner, uint256 _shares) internal virtual override {
+    _twabController.burn(msg.sender, _owner, uint96(_shares)); // Silent downcast!
+}
+```
+
+**Impact**: Users can withdraw full assets while only burning uint96 worth of shares, draining the vault.
+
+**Mitigation**: Use SafeCast library for all type conversions.
+
+### 270. Asset/Share Type Confusion (PoolTogether H-03)
+**Pattern**: Function parameters used interchangeably as both assets and shares without conversion.
+
+**Vulnerable Code Example** (PoolTogether):
+```solidity
+function liquidate(address _account, address _tokenIn, uint256 _amountIn, address _tokenOut, uint256 _amountOut) public {
+    if (_amountOut > _liquidatableYield) revert LiquidationAmountOutGTYield(_amountOut, _liquidatableYield);
+    
+    _increaseYieldFeeBalance(
