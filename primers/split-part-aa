@@ -1,0 +1,1087 @@
+# 🛡️ Primer Tester – v0.6
+## Enhanced with Universal Invariants & Attack-Grade Framework
+
+**Latest Update (v0.6):** Added universal invariants framework covering DEX/AMM constant product rules, bridge/cross-chain atomicity patterns, staking/validator slashing rules, composability invariants, CEI pattern enforcement, read-only reentrancy, storage slot integrity checks, delegation linearity, equivocation detection, slippage protection, message ordering/replay prevention, validator balance constraints, and Foundry fuzz testing templates. Integrated rapid prioritization framework based on exploit frequency statistics:
+* **Fund Conservation:** 99%
+* **Access Control:** 95%
+* **Health Factor:** 85%
+* **Exchange Rate:** 80%
+* **Liquidation:** 75%
+* **Reentrancy:** 70%
+* **Oracle:** 65%
+* **Precision:** 60%
+
+---
+
+## 1. Purpose of This Primer
+
+This primer is designed to help your AI generate:
+
+* High-coverage unit tests
+* Invariant tests
+* Fuzzing strategies
+* Attack simulations
+* State-machine coverage
+* Integration tests across multiple contracts
+* Emergent behavior detection
+* Cross-asset / cross-module interactions
+* Corner-case and failure-path stress tests
+* DEX/AMM constant product verification
+* Bridge/cross-chain atomicity checks
+* Staking/validator slashing scenarios
+
+It contains the distilled logic, patterns, and attack thinking needed to test any DeFi / smart contract protocol.
+
+> **Note:** This is a **testing-oriented primer**, not a vulnerability encyclopedia. The goal is to give Claude the **testing mindset, testing logic, and testing structures** needed to produce elite audits through simulation.
+
+---
+
+## 2. Test Generation Philosophy
+
+High-impact tests come from these principles:
+
+### 2.1 Break Assumptions First
+
+* Assume **invariants are breakable**
+* Assume **internal accounting desynchronizes**
+* Assume **precision loss compounds**
+* Assume governance/admin misuse
+* Assume multisig reliability is not guaranteed
+* Assume **users behave maliciously**
+* Assume donation functions bypass validation
+* Assume exchange rates can be artificially inflated
+* Assume liquidation calculations use stale state
+* Assume delegated tokens can be double-spent
+* Assume bridge messages can be replayed
+* Assume **validator sets can be manipulated**
+* Assume **constant product formula can be violated**
+* Assume **CEI pattern violations enable reentrancy**
+
+### 2.2 Behavior Over Code
+
+Tests should verify **behaviors**, not lines of code:
+
+* Expected → actual **asset flows**
+* Expected → actual **solvency**
+* Expected → actual interest accrual
+* Expected → actual liquidation outcomes
+* Expected → actual **rounding and precision impacts**
+* Expected → actual permissions enforcement
+* Expected → actual **fund conservation** across operations
+* Expected → actual **health factor** calculations
+* Expected → actual **oracle freshness** enforcement
+* Expected → actual **constant product maintenance** (DEX)
+* Expected → actual **cross-chain atomicity** (bridges)
+* Expected → actual delegation accounting (staking)
+* Expected → actual slashing execution (validators)
+
+### 2.3 Simulation > Explanation
+
+When in doubt: **simulate the attack**. Even if it seems impossible.
+
+---
+
+## 3. Core Testing Structures
+
+Claude should generate tests using these mental templates:
+
+### 3.1 Unit Tests
+
+Unit tests must cover:
+
+* Each function **in isolation**
+* Inputs at $0, 1, \text{max}, \text{near-max}, \text{negative (if type allows)}, \text{repeated inputs}$
+* Error paths
+* Boundary conditions
+* Precision/rounding behavior
+* Reentrancy-related pre/post-state consistency
+* Event emissions correctness
+* Access control
+* Interest accrual preconditions ($\text{accrualBlockNumber} == \text{currentBlock}$)
+* Math error vs. revert handling (error codes vs. state rollback)
+* Fresh function preconditions (nested calls must re-verify state)
+* **CEI pattern compliance** (Checks-Effects-Interactions order)
+* Storage slot integrity (no collisions via inheritance)
+
+> **Unit Test Template Clause:** Describe the function behavior, expected invariants, pre-state, post-state, and edge cases. Generate multiple tests covering normal flow + adversarial flow.
+
+### 3.2 Fuzz Tests
+
+Fuzz tests must:
+
+* Randomize user behaviors
+* Randomize asset prices
+* Randomize call order
+* Randomize liquidity parameters
+* Stress-test boundary conditions
+* Try to break assumptions across hundreds of random sequences
+* Test interest accrual with $\text{block.number}$ increments: $\{\text{0, 1, } 2^{16}-1, 2^{32}-1, \text{max\_uint}\}$
+* Test exchange rates near $1\text{e}18$ with micro-deposits ($\leq \text{1 wei}$)
+* Test liquidations with $\text{reserves} == 0$, $\text{utilization} == 100\%$, $\text{oracle stale}$
+* Test cross-collateral with $\text{LTV} = 0$ assets, isolated assets near debt ceiling
+* Test reentrancy via ERC-777/fee-on-transfer hooks during $\text{mint/borrow/liquidate}$
+* Test constant product violations via repeated swaps
+* Test bridge message replay via duplicate nonces
+* Test delegation double-spend via concurrent delegations
+
+> **Fuzz Template Clause:** Define ranges, random behaviors, and invariants. Try to break internal accounting and cross-function assumptions. Use corpus-guided fuzzing starting from known exploit transactions, mutating sequence length and boundary values.
+
+### 3.3 Invariant Tests
+
+Core invariants all protocols must defend:
+
+#### Conservation Invariants:
+* $\text{sum(userBalances)} == \text{totalSupply}$
+* $\text{sum(userBalances)} + \text{reserves} + \text{protocol\_accumulated} \le \text{totalSupply}$ (strict equality when no fees/lost precision)
+* $\text{shares} \times \text{sharePrice} == \text{totalAssets}$
+* $\text{reserves} + \text{borrowed} == \text{totalAssets}$
+* $(\text{totalSupply} \cdot \text{exchangeRate} + \text{totalBorrows} + \text{totalReserves})_\text{pre} == (\text{totalSupply} \cdot \text{exchangeRate} + \text{totalBorrows} + \text{totalReserves})_\text{post}$ (Certora fund conservation)
+* $(\text{cash} + \text{borrows} + \text{reserves})_\text{start} == (\text{cash} + \text{borrows} + \text{reserves})_\text{end}$ across all operations
+* No money appears from void: $(\text{protocol state after}) - (\text{protocol state before}) \in \{\text{valid transfers, accruals, burns}\}$
+
+#### Health Invariants:
+* $\text{collateralRatio(user)} \ge \text{liquidationThreshold}$
+* Health improves after liquidation
+* Liquidations cannot introduce bad debt
+* $\text{health\_factor} \ge 1.0$ before $\text{ \&\& }$ after borrow operations
+* $\text{Health factor} == 1.0 \to \textbf{NOT liquidatable}$; $< 1.0 \to \textbf{liquidatable}$ (exclusive states)
+* $\text{health\_factor} = 1.0 + \epsilon$ (any positive epsilon) $\to \textbf{NOT liquidatable}$ (boundary precision)
+
+#### Oracle Invariants:
+* No stale prices used
+* Prices monotonic except when feed changes
+* Negative prices impossible
+* Oracle must update **BEFORE** liquidation calculations
+* TWAP window large enough to prevent single-block manipulation
+* Multi-source oracles must fallback correctly on feed stalls
+* $\text{IF (now - last\_update\_timestamp} > \text{staleness\_threshold) THEN revert}$
+* $\text{updatePrice()}$ restricted to $\{\text{oracle\_address, governance\_multisig}\}$
+
+#### Permission Invariants:
+* Only designated roles modify state
+* Role changes require delays / governance
+* Administrative actions pass access control checks
+* $\text{onlyAdmin(f)} \to \text{every invocation requires msg.sender} == \text{admin}$
+* $\text{current\_admin(post)} \in \{\text{current\_admin(pre), pending\_admin}\}$ (2-step admin change)
+* $\text{grantRole(role, user)}$ must emit event (state changes observable)
+
+#### Accounting Invariants:
+* Interest accrual monotonic
+* Borrow index never decreases
+* User debt never becomes negative
+* $\text{borrowIndex}$ multiplier uses ray precision ($1\text{e}27$) to prevent compound rounding
+* $\text{accrualBlockNumber}$ updates to current block after accrual
+* Borrow index immutable when $\text{rate} = 0$
+* $\text{Total interest} == 0$ when $\text{totalBorrows} = 0$
+* $\text{totalBorrows(t)} \ge \text{totalBorrows(t-1)}$ (monotonic except repayment/liquidation)
+* $\text{totalReserves(t)} \ge \text{totalReserves(t-1)}$ (monotonic except governance withdrawal)
+
+#### Share/Token Creation Invariants:
+* No zero-share mints (prevents inflation attacks)
+* $\text{deposit(X wei)} \to \text{shares} \ne 0$ for $X > 0$
+* No phantom borrowing ($\text{totalBorrows} \uparrow = \text{exact borrow amount}$)
+* $\text{user.debt} \downarrow = \min(\text{repay\_amount, total\_debt})$
+* Exchange rate immutable during repay operations
+* $\text{redeem(shares)} \to \text{assets} \ge \text{convertToAssets(shares)}$ (no slippage surprise)
+* $\text{withdraw(assets)} \to \text{shares} \le \text{previewWithdraw(assets)}$ (fewer shares burned than promised)
+
+#### Vault-specific Invariants (ERC-4626):
+* $\text{exchangeRate} = (\text{totalAssets} + \text{offset}) / (\text{totalShares} + \text{offset})$ (virtual offset prevents inflation)
+* Dead shares minted at initialization ($1000 \text{ shares}$ to $\text{address(1)}$)
+* $\text{totalShares} > 0$ always (prevents first-depositor attack)
+* $\text{exchangeRate(t)} \ge \text{exchangeRate(t-1)}$ (monotonic except protocol losses)
+* $\text{convertToAssets(shares) / shares} \ge \text{convertToAssets(shares-1) / (shares-1)}$ (no worse rate for higher share counts)
+
+#### DEX/AMM Invariants:
+* Constant product: $\text{reserve\_tokenA(post)} \times \text{reserve\_tokenB(post)} \ge \text{reserve\_tokenA(pre)} \times \text{reserve\_tokenB(pre)}$ (post-fee)
+* $(x + \Delta x) \times (y - \Delta y) \ge k$ (liquidity pool product increases as fees accumulate)
+* LP share invariant: $\text{share\_price} = (\text{reserve\_A} + \text{reserve\_B in USD}) / \text{totalShares}$
+* LP redemption: $\text{LP receives (share\_count} \times \text{share\_price) of each asset}$
+* Slippage protection: $\text{swapExactTokensForTokens(amountIn, amountOutMin)} \to \text{actual\_out} \ge \text{amountOutMin}$
+* Liquidation price uses TWAP: $\text{liquidation\_price(t)} = \text{TWAP(last\_30\_blocks)}$, not $\text{spot\_price(t)}$
+
+#### Bridge/Cross-Chain Invariants:
+* Token peg: $\text{supply(tokenA\_on\_chain\_1)} + \text{supply(wrapped\_tokenA\_on\_chain\_2)} = \text{total\_canonical\_supply}$
+* Lock-mint atomicity: $(\text{1. LOCK on source}) \to (\text{2. MINT on dest})$ — no partial state
+* Refund mechanism: $\text{IF (lock succeeds BUT mint fails) THEN (user refund after timeout)}$
+* Message ordering: $\text{message\_nonce}$ increments monotonically; receiver rejects $\text{nonce} \le \text{last\_processed\_nonce}$
+* Validator consensus: $\text{required\_signatures} = \lceil 2/3 \times \text{active\_validator\_count} \rceil$
+
+#### Staking/Validator Invariants:
+* Slashing immutability: $\text{slashed\_amount(validator)}$ permanently subtracted; cannot recover
+* Validator balance: $\text{validator\_balance} \ge \text{min\_effective\_balance}$ (e.g., 32 ETH)
+* $\text{IF (balance} < \text{min\_effective\_balance) THEN (validator\_status} = \text{INELIGIBLE)}$
+* Delegation linearity: $\sum(\text{delegated\_balances[*]}) \le \text{total\_liquid\_staking\_token\_supply}$
+* $\text{delegated[user]} + \text{withdrawable[user]} = \text{balance[user]}$ (no double-counting)
+* Equivocation detection: $\text{signature(message\_A, height\_H)} + \text{signature(message\_B, height\_H)}$ with $A \ne B \to \text{slashing}$
+
+#### State Consistency Invariants:
+* Reentrancy lock: $\text{locked} = \text{false}$ initially, set $\text{true}$ on entry, check $\text{!locked}$, set $\text{false}$ on exit
+* Cross-function reentrancy: Both functions share same lock variable
+* Read-only reentrancy: $\text{view\_function()}$ returns consistent value throughout tx if underlying state unchanged
+* CEI pattern: Order: $(\text{1. checks}) \to (\text{2. effects}) \to (\text{3. interactions})$
+* Pause invariant: $\text{IF (paused} = \text{true) THEN (all write functions revert)}$; read functions succeed
+* Storage slot integrity: No overlapping slots via inheritance; $\text{\_\_gap}$ slots prevent collisions
+
+#### Solvency Invariants:
+* $\text{total\_liabilities} \le \text{total\_assets}$ at all times
+* $\text{bad\_debt} \le \text{protocol\_reserves}$ (insurance pool absorbs before insolvency)
+* $\text{withdrawn\_amount} \le \text{original\_staked} + \text{accumulated\_rewards}$ (no balance inflation)
+
+#### Composability Invariants:
+* $\text{IF (external\_call SUCCEEDS) THEN (local state consistent)}$
+* Protocol invariant holds at EVERY contract boundary, not just function entry/exit
+* $\text{IF (nested\_call A} \to \text{B} \to \text{A) THEN (re-entered state must satisfy invariant)}$
+
+#### Precision Invariants:
+* $\text{accumulated\_rounding\_error} \le 1 \text{ wei per transaction}$ (or protocol-defined tolerance)
+* Rounding direction consistent: either always floor or always ceil, never random
+* $|\text{computed\_rate} - \text{exact\_rate}| < 10^{-15} \times \text{exchange\_rate}$ (parts per million)
+* $\text{IF (accumulated\_error\_threshold\_exceeded) THEN (tx reverts)}$
+
+> **Invariant Template Clause:** Define all invariants the protocol MUST uphold. Then generate tests explicitly trying to break each invariant through extreme or adversarial sequences.
+
+### 3.4 Adversarial & Attack Tests
+
+Attack tests simulate:
+
+* **Reentrancy**
+* **Flash loans**
+* **Oracle manipulation**
+* Sandwiching
+* Cross-asset manipulation
+* Multi-step desync attacks
+* Economic attacks (MEV, front-run, griefing)
+* Permission escalation
+* Misconfigured parameter exploitation
+* Multi-protocol integrations / external protocol failures
+* Donation attacks (bypass validation via direct transfers)
+* Self-liquidation loops with flash loans
+* Vault inflation attacks (ERC-4626 first-depositor exploit)
+* Mint-donate-liquidate sequences
+* Oracle front-running (mempool sniping price updates)
+* Liquidation sandwiching (front-run collateral deposit $\to$ liquidate $\to$ back-run withdraw)
+* LP token pricing manipulation (flash-loan reserve imbalance)
+* Precision loss accumulation via micro-transactions
+* Constant product violations via repeated micro-swaps
+* Bridge message replay via duplicate nonces
+* Delegation double-spend via concurrent delegations
+* MEV sandwich attacks on DEX swaps
+* Validator equivocation (double-signing)
+* CEI pattern violations enabling reentrancy
+
+> **Attack Template Clause:** Simulate the attacker with max freedom. Try to break solvency, accounting, or invariants through multi-step attack flows. All attack flows should be atomic (single tx, single block) when testing flash-loan sequences.
+
+#### Real Exploit Patterns to Test:
+
+| Exploit Pattern | Description | Test Requirement |
+| :--- | :--- | :--- |
+| **Euler-style ($197M)** | $\text{eToken} \to \text{donateToReserves()} \to \text{liquidate self} \to \text{drain collateral}$ | $\text{donate()}$ must **NOT** affect liquidation calculations. Validate collateral $\ge$ debt before \& after donate. |
+| **Mountain Protocol/Venus ($716K)** | Flash loan $\to$ deposit to empty vault $\to$ artificially raise exchange rate $\to$ self-liquidate | Test: virtual assets/shares offset, dead shares at initialization. |
+| **Cream Finance ($25M-$130M)** | Reentrancy via AMP token hook during borrow $\to$ call borrow again before balance update | Test: reentrancy guards on all state-changing functions with external calls. |
+| **HopeLend ($835K)** | Flash loan $\to$ manipulate $\text{reserveBalance} \to$ exploit integer division in liquidity index | Test: precision loss in index calculations, rounding boundaries. |
+| **Balancer V2 ($128M)** | Rounding errors in $\text{\_upscaleArray} \to$ repeated micro-swaps accumulate precision loss | Test: cumulative rounding over 100+ iterations, price suppression via arbitrage. |
+| **Raft Finance ($3.6M)** | Flash loan $\to$ manipulate share-to-token ratio $\to$ rounding down extra shares $\to$ redeem inflated value | Test: share calculation rounding, flash-loan-resistant exchange rates. |
+| **Mango Markets ($100M)** | Low liquidity token price spike $\to$ deposit as collateral $\to$ borrow high-value assets | Test: liquidity-weighted oracle pricing, borrow limits per asset volatility. |
+
+### 3.5 State Machine Tests
+
+These tests verify:
+
+* Contract behavior across many steps
+* State transitions in long sequences
+* Edge cases unlocked only after multiple operations
+* Composability failures
+* Liquidation cannot execute twice in same block for same position
+* Multiple debt instruments accrue independently
+* Nested call consistency ($\text{A} \to \text{B} \to \text{A}$ must preserve invariants)
+* Pause/unpause state transitions
+* Delegation/undelegation cycles
+
+**Examples:**
+
+* $\text{deposit} \to \text{withdraw} \to \text{deposit} \to \text{borrow} \to \text{repay} \to \text{liquidate}$
+* $\text{price up} \to \text{price down} \to \text{borrow} \to \text{swap} \to \text{repay}$
+* Rapid repeated flash-loan interactions
+* $\text{deposit} \to \text{mint} \to \text{donate} \to \text{liquidate} \to \text{withdraw}$ (Euler pattern)
+* $\text{flash loan} \to \text{price manipulation} \to \text{self-liquidate} \to \text{exit}$ (atomic sequence)
+* $\text{delegate} \to \text{undelegate} \to \text{withdraw} \to \text{delegate}$ (staking cycle)
+* $\text{lock on chain 1} \to \text{mint on chain 2} \to \text{burn on chain 2} \to \text{unlock on chain 1}$ (bridge roundtrip)
+
+> **State Machine Template Clause:** Generate tests where the user performs long random sequences. After each step, verify invariants and internal state is consistent. Test that liquidation status is exclusive (cannot liquidate already-liquidated position).
+
+---
+
+## 4. Attack Surface Checklist (For Test Generation)
+
+Claude should generate tests covering every attack surface:
+
+### 4.1 Global Attack Surfaces
+
+* Math precision
+* Oracle dependencies
+* Permission boundaries
+* Time-sensitive logic
+* External calls
+* ERC20 misbehavior
+* Flash liquidity
+* Liquidation engines
+* Interest rate models
+* Deposit/withdraw flow
+* Cross-contract communication
+* Upgradeability
+* Donation/direct transfer bypass
+* Exchange rate manipulation
+* LP token valuation
+* Vault share inflation (ERC-4626)
+* Isolated asset debt ceiling enforcement
+* Supply/borrow cap synchronization
+* Constant product maintenance (DEX)
+* Bridge message ordering (cross-chain)
+* Delegation accounting (staking)
+* CEI pattern violations
+* Storage slot collisions
+
+### 4.2 ERC20 Test Coverage
+
+* Non-standard returns
+* Deflationary tokens
+* Fee-on-transfer
+* Rebasing updates
+* Changed decimals
+* Blocked transfers
+* Approvals revoked mid-test
+* ERC-777 hooks (reentrancy vectors)
+* Zero-amount transfers
+* Transfer to self
+
+### 4.3 Oracle Test Coverage
+
+* Stale prices
+* Delayed updates
+* Manipulation resistance
+* Rounding floor/ceil errors
+* Extreme price swings
+* Oracle returning 0
+* Oracle reverting
+* Mismatched decimals
+* Grace period expiration (must revert or use fallback)
+* Multi-source oracle failover (Chainlink + Uniswap TWAP)
+* Single-block TWAP manipulation via large swaps
+* Oracle update front-running (mempool sniping price updates)
+* Time-travel attacks (valid old prices within acceptance window)
+* LP token pricing errors (reserve manipulation via flash loan)
+* Oracle access control bypass attempts
+
+### 4.4 Liquidation Test Coverage
+
+* Profitable self-liquidation
+* Liquidation not improving health
+* Liquidation leaving protocol insolvent
+* Liquidation allowing attacker to loop loans
+* Liquidation using old price
+* Liquidation causing accounting desync
+* Liquidation fees misapplied
+* Health factor $\text{== 1.0}$ exactly (must **NOT** liquidate)
+* Health factor $<\text{1.0}$ (must liquidate)
+* $\text{LTV} = 0$ collateral (cannot liquidate if isolated)
+* Max liquidation ratio enforcement (e.g., 50% cap)
+* Stale oracle during liquidation (premature or missed liquidations)
+* Liquidation discount vs. slippage (unprofitable edge case)
+* Liquidation bonus accumulation draining reserves
+* Collateral price rebound mid-seize (arbitrage opportunity)
+* Multi-collateral priority inversion (high-LTV asset liquidated first)
+* Single-block liquidation cap (prevents pool drain via loops)
+* Liquidation sandwich attack (front-run deposit $\to$ liquidate $\to$ back-run withdraw)
+* Oracle price lag during seize (liquidator loss from slippage)
+* Cannot liquidate twice in same block for same position
+* Liquidation atomicity: $(\text{seize} + \text{repay})$ atomic; $\text{IF (repay fails) THEN (seize fails)}$
+* Collateral seized constraint: $\text{collateral\_seized} \le \text{max\_liquidation\_ratio} \times \text{borrow\_repaid}$
+* Post-liquidation health: $\text{collateral\_seized} + \text{remaining\_collateral} \ge \text{remaining\_debt} \times \text{LTV}$
+
+### 4.5 Solvency Test Coverage
+
+* Underflow positions
+* Borrow index desync
+* Negative debt
+* Rounding creating free money
+* Multi-step borrow $\to$ repay causing drift
+* Reward tokens inflating $\text{totalSupply}$
+* Fund conservation across $\text{mint/redeem/borrow/repay/liquidate}$
+* $\text{Reserves} + \text{borrowed} == \text{totalAssets}$ after all operations
+* No balance creation/destruction in ERC20 interactions
+* Liquidation seizing exact collateral (no phantom transfers)
+* Total liabilities vs. total assets: $\text{total\_liabilities} \le \text{total\_assets}$
+* Bad debt absorption: $\text{bad\_debt} \le \text{protocol\_reserves}$
+
+### 4.6 Cross-Collateral & Isolated Asset Coverage
+
+* Isolated asset debt ceiling bypass via precision loss
+* $\text{totalIsolationDebt} \le \text{debtCeiling}$ after any $\text{borrow/repay/liquidation}$ sequence
+* Supply cap enforcement (atomic multi-user deposits, race conditions)
+* Borrow cap enforcement (flash loans bypass vs. inclusion)
+* Delisted collateral handling (health factor with stale/zero price)
+* Multiple debt instruments accruing independently ($\text{Debt1 repay} \ne \text{Debt2 state}$)
+* Cannot open new borrows against delisted collateral
+* Existing positions in delisted collateral must liquidate or migrate
+* State isolation: $\text{collateral[user]} \ne 0 \text{ IF (borrow[user]} > 0 \text{ AND LTV[collateral\_asset]} = 0)$
+* Isolated market constraint: $\text{IF (asset\_isolated) THEN (user can borrow from isolated market only)}$
+
+### 4.7 Vault-Specific Coverage (ERC-4626)
+
+* Empty vault first-depositor attack ($\text{1 wei deposit} \to \text{donate} \to \text{inflate exchange rate}$)
+* Zero-share mint prevention
+* Virtual assets/shares offset implementation
+* Dead shares at initialization (burn $1000 \text{ shares}$ to $\text{address(1)}$)
+* Exchange rate manipulation resistance (flash-loan TVL inflation)
+* Withdraw slippage bounding
+* Share-to-asset rounding direction consistency
+
+### 4.8 DEX/AMM Coverage
+
+* Constant product violations via repeated swaps
+* LP share price manipulation via flash-loan reserve imbalance
+* Slippage protection enforcement: $\text{actual\_out} \ge \text{amountOutMin}$
+* MEV sandwich resistance: TWAP pricing for liquidations
+* Pool imbalance attack: Front-run swap, user swap at worse price, back-run profit
+* LP redemption fairness: Depositor receives proportional share of reserves
+
+### 4.9 Bridge/Cross-Chain Coverage
+
+* Token peg violations: $\text{minted\_chain\_2} > \text{locked\_chain\_1}$ (excess supply)
+* Lock-mint atomicity: No partial state; refund mechanism if mint fails
+* Message replay prevention: Nonce monotonicity; reject $\text{nonce} \le \text{last\_processed}$
+* Validator consensus enforcement: $\text{required\_signatures} = \lceil 2/3 \times \text{validators} \rceil$
+* Cross-chain refund timeout: $\text{locked\_until\_timestamp}$ expires $\to$ user can withdraw on source
+
+### 4.10 Staking/Validator Coverage
+
+* Slashing irreversibility: Slashed amount cannot be recovered via restaking
+* Validator balance minimum: $\text{balance} < \text{min\_effective\_balance} \to \text{INELIGIBLE}$
+* Delegation double-spend prevention: $\sum(\text{delegated}) \le \text{total\_supply}$
+* Undelegation time-lock: $\text{IF (delegated} > 0) \text{ THEN (cannot withdraw immediately)}$
+* Equivocation detection: Duplicate signatures at same height $\to$ slashing
+
+---
+
+## 5. Testing Patterns (Mental Models)
+
+These are the testing habits Claude should **ALWAYS** use:
+
+### 5.1 Asymmetric Behavior Detection
+
+Look for places where:
+
+deposit≠withdraw\text{deposit} \ne \text{withdraw}
+deposit=withdraw (non-symmetric flows)
+
+mint≠redeem\text{mint} \ne \text{redeem}
+mint=redeem
+borrow≠repay\text{borrow} \ne \text{repay}
+borrow=repay
+transferFrom\text{transferFrom}
+transferFrom path ≠\ne
+= transfer\text{transfer}
+transfer path
+
+donateToReserves≠normalDeposit\text{donateToReserves} \ne \text{normalDeposit}
+donateToReserves=normalDeposit (
+Euler exploit vector)
+flash loan borrow≠normal borrow\text{flash loan borrow} \ne \text{normal borrow}
+flash loan borrow=normal borrow (cap enforcement differences)
+
+lock on chain 1≠unlock on chain 1\text{lock on chain 1} \ne \text{unlock on chain 1}
+lock on chain 1=unlock on chain 1 (bridge asymmetry)
+
+delegate≠undelegate\text{delegate} \ne \text{undelegate}
+delegate=undelegate (time-lock asymmetry)
+
+
+5.2 Path Skipping
+Test paths where:
+
+require()\text{require()}
+require() is bypassed
+
+A setter is not called
+A value is not updated before used
+Branching creates inconsistent states
+accrueInterest()\text{accrueInterest()}
+accrueInterest() not called before mintFresh()\text{mintFresh()}
+mintFresh()
+Oracle update skipped before liquidation
+Health factor check omitted in edge-case branch
+CEI pattern violated: Effect after external call
+Reentrancy lock not set before external call
+
+5.3 Precision Drift Over Time
+Test sequences that cause:
+
+Cumulative rounding errors
+Extreme decimal mismatches
+Slow invariant drift
+Incentive/reward misaccounting
+Micro-transaction accumulation (100+ iterations\text{100+ iterations}
+100+ iterations)
+
+Integer division truncation in debt tracking
+Exchange rate rounding near 1e18\text{1e18}
+1e18 with 1 wei\text{1 wei}
+1 wei deposits
+
+Borrow index compound rounding (test with ray precision 1e27\text{1e27}
+1e27)
+
+DEX constant product drift via repeated micro-swaps
+
+5.4 Boundary Value Attacks
+Test these inputs:
+
+0\text{0}
+0
+1\text{1}
+1
+max uint\text{max uint}
+max uint
+max-1\text{max-1}
+max-1
+Very small decimals
+Negative behavior via underflow
+\text{2^16-1, 2^32-1, 2^64-1}
+ (block number overflow tests)
+
+Exchange rate at exactly 1e18\text{1e18}
+1e18
+Health factor at exactly 1.0\text{1.0}
+1.0
+Debt at exactly debt ceiling\text{debt ceiling}
+debt ceiling
+Supply at exactly supply cap\text{supply cap}
+supply cap
+Validator balance at exactly min_effective_balance
+Liquidation ratio at exactly max_liquidation_ratio
+
+5.5 Atomic Attack Sequences
+Test multi-step attacks in single transaction:
+
+Flash loan→price manipulation→self-liquidation→exit\text{Flash loan} \to \text{price manipulation} \to \text{self-liquidation} \to \text{exit}
+Flash loan→price manipulation→self-liquidation→exit
+Deposit→donate→liquidate→withdraw\text{Deposit} \to \text{donate} \to \text{liquidate} \to \text{withdraw}
+Deposit→donate→liquidate→withdraw (Euler pattern)
+
+Borrow→manipulate pool→borrow again with manipulated state\text{Borrow} \to \text{manipulate pool} \to \text{borrow again with manipulated state}
+Borrow→manipulate pool→borrow again with manipulated state
+$\text{Oracle update front-run} \to \text{borrow at old price} \to \text{update executes} \to \text{liquidate}
+SXContinue$
+
+MEV sandwich:front-run swap→user swap→back-run swap\text{MEV sandwich:} \text{front-run swap} \to \text{user swap} \to \text{back-run swap}
+MEV sandwich:front-run swap→user swap→back-run swap
+Bridge exploit:lock→replay message→double-mint\text{Bridge exploit:} \text{lock} \to \text{replay message} \to \text{double-mint}
+Bridge exploit:lock→replay message→double-mint
+
+5.6 Oracle Manipulation Resistance
+Test oracle attack vectors:
+
+Single-block price manipulation (flash loan→Uniswap swap→oracle read\text{flash loan} \to \text{Uniswap swap} \to \text{oracle read}
+flash loan→Uniswap swap→oracle read)
+
+TWAP manipulation resistance (require window >1 block> 1 \text{ block}
+>1 block)
+
+Multi-source oracle failover (Chainlink stall →\to
+→ TWAP fallback)
+
+Time-travel attacks (old valid prices within acceptance window)
+LP token pricing via reserve manipulation
+
+5.7 Composability Testing
+Test nested call consistency:
+
+A→B→A\text{A} \to \text{B} \to \text{A}
+A→B→A (re-entry must preserve invariants)
+
+A→B→C→A\text{A} \to \text{B} \to \text{C} \to \text{A}
+A→B→C→A (multi-hop re-entry)
+
+View function consistency during reentrancy
+Invariant preservation at every contract boundary
+
+5.8 CEI Pattern Verification
+Test Checks-Effects-Interactions order:
+
+Checks first: All require()\text{require()}
+require() statements before state changes
+
+Effects second: All state updates before external calls
+Interactions last: External calls after state finalized
+Violation detection: Effect after external call →\to
+→ reentrancy risk
+
+
+
+6. Test Output Rules for Claude
+When Claude generates tests, it MUST follow these rules:
+High Signal Only
+
+No prose paragraphs
+No teaching
+No explaining Solidity
+No generic text
+
+Compression
+
+Bullets
+Trees
+Checklists
+Invariant lists
+Test case grids
+Attack sequences
+
+Universal Formatting
+Claude must output tests as:
+
+Test description
+Preconditions
+Steps
+Expected outcome
+Invariant checks
+
+Always structured, always dense.
+
+7. Rapid-Fire Test Case Checklist
+Use this checklist for comprehensive coverage:
+Attack VectorTest CaseExpected OutcomeInflationDeposit 0\text{0}
+0, then 1 wei\text{1 wei}
+1 wei; check share output
+≥1 share\ge \text{1 share}
+≥1 share
+OR revertPrecisionBorrow micro-amounts repeatedly; sum debt≤actual borrowed\le \text{actual borrowed}
+≤actual borrowed (
+no rounding up)Flash Loan LoopBorrow →\to
+→ manipulate pool →\to
+→ borrow again
+2nd borrow\text{2nd borrow}
+2nd borrow uses
+fresh state, not manipulatedLiquidation SandwichLiquidate, then oracle update, then liquidate same position2nd liquidation fails\text{2nd liquidation fails}
+2nd liquidation fails (
+already liquidated)Health Factor == 1.0Set collateral to exactly trigger LTVNO liquidation; health==1.0 exact\text{health} == 1.0 \text{ exact}
+health==1.0 exactZero CollateralDeposit asset with LTV=0\text{LTV} = 0
+LTV=0, try to borrow
+Revert; cannot use as collateralIsolated + Debt CeilingMax out debt ceiling, try to borrow 1 more unit\text{1 more unit}
+1 more unitRevert; debt ceiling enforcedReentrancy HookTransfer ERC-777\text{ERC-777}
+ERC-777 during mint\text{mint}
+mint, re-enter mint\text{mint}
+mintOnly 1 mint executes; state consistentOracle StaleQuery oracle after grace period expiresRevert OR use fallback priceSupply Cap BreachDeposit to supply cap; one more unit depositedLast deposit reverts or fails gracefullyDonate-LiquidateDonate large amount →\to
+→ liquidate position
+Liquidation calc ignores donated amountExchange Rate InflationEmpty vault →1 wei deposit→donate 10M tokens\to \text{1 wei deposit} \to \text{donate 10M tokens}
+→1 wei deposit→donate 10M tokensVirtual offset prevents inflationSelf-Liquidation ProfitBorrow →\to
+→ price drop →\to
+→ self-liquidate with discount
+Profit≤liquidation bonus\text{Profit} \le \text{liquidation bonus}
+Profit≤liquidation bonus, no accounting desync
+Interest Accrual SkipCall mintFresh()\text{mintFresh()}
+mintFresh() without accrueInterest()\text{accrueInterest()}
+accrueInterest() first
+Revert with NOT_ACCRUED errorLP Token MispricingFlash loan →\to
+→ manipulate reserves →\to
+→ borrow against LP\text{LP}
+LPLP\text{LP}
+LP pricing accounts for fee-on-withdraw
+Constant Product ViolationRepeated micro-swaps; check x×y≥kx \times y \ge k
+x×y≥kProduct increases (fees accumulate)Bridge Message ReplaySend message with nonce=1\text{nonce} = 1
+nonce=1 twice
+Second attempt reverts (nonce reused)Delegation Double-SpendDelegate same tokens to two validatorsRevert; ∑(delegated)≤balance\sum(\text{delegated}) \le \text{balance}
+∑(delegated)≤balanceCEI Pattern ViolationFunction with effect after external callReentrancy possible; state inconsistentValidator SlashingTrigger slashing condition; attempt re-stakeQueued behind others; cannot immediate re-stakeRead-Only ReentrancyCall view function during reentrancySame output both times (state unchanged)
+
+8. Formal Verification Rules (Certora CVL Templates)
+8.1 Fund Conservation Rule
+rule noFundsCreation:
+  ∀ function f ∈ {mint, redeem, borrow, repay, liquidate}:
+    (totalSupply·exchangeRate + totalBorrows + totalReserves)_pre 
+    == (totalSupply·exchangeRate + totalBorrows + totalReserves)_post
+    OR state transition reverted
+8.2 Liquidation Once Rule
+rule liquidationOnce(address borrower, address liquidator, address collateral) {
+  env e1; env e2;
+  require e1.block.number == e2.block.number; // Same block
+  
+  liquidate(e1, borrower, collateral);
+  bool reverted1 = lastReverted;
+  
+  liquidate(e2, borrower, collateral); // Same tx sequence
+  bool reverted2 = lastReverted;
+  
+  assert reverted2, "Cannot liquidate twice in same block";
+}
+8.3 Per-Operation Invariants
+mintFresh:
+
+accrueInterest() must execute first
+NO state change if accrual fails
+totalSupply ↑≡account.balance\uparrow \equiv \text{account.balance}
+↑≡account.balance ↑\uparrow
+↑
+Rounding error bounded
+NO zero-share mints
+
+borrowFresh:
+
+health_factor≥1.0\text{health\_factor} \ge 1.0
+health_factor≥1.0 before &\&
+& after
+
+totalBorrows\text{totalBorrows}
+totalBorrows ↑=amount\uparrow = \text{amount}
+↑=amount (
+no phantom borrowing)
+borrower.cash\text{borrower.cash}
+borrower.cash ↑=amount\uparrow = \text{amount}
+↑=amount
+Borrow cap enforced
+
+repayBorrowFresh:
+
+borrower.debt\text{borrower.debt}
+borrower.debt ↓=min⁡(amount, debt)\downarrow = \min(\text{amount, debt})
+↓=min(amount, debt)
+payer.cash\text{payer.cash}
+payer.cash ↓=amount\downarrow = \text{amount}
+↓=amount (even if debt<amount\text{debt} < \text{amount}
+debt<amount)
+
+Exchange rate immutable during repay
+
+liquidateFresh:
+
+Seize transfers exact collateral
+liquidator.bonus≤discount\text{liquidator.bonus} \le \text{discount}
+liquidator.bonus≤discount
+NO liquidation if health_factor>1.0\text{health\_factor} > 1.0
+health_factor>1.0
+Health factor improves post-liquidation
+Liquidator receives bonus from reserves (reserves must be sufficient)
+
+8.4 State Transition Invariants
+
+Administrative actions (setComptroller, setAdmin\text{setComptroller, setAdmin}
+setComptroller, setAdmin) pass access control
+
+ERC20 interactions respect balance invariants (no creation/destruction)
+Interest accrual monotonically increases borrowIndex & totalReserves\text{borrowIndex} \text{ \& } \text{totalReserves}
+borrowIndex & totalReserves
+accrualBlockNumber\text{accrualBlockNumber}
+accrualBlockNumber updates to current block
+
+Borrow index immutable when rate=0\text{rate} = 0
+rate=0
+Total interest == 0\text{== 0}
+== 0 when totalBorrows=0\text{totalBorrows} = 0
+totalBorrows=0
+
+8.5 DEX/AMM Invariants
+rule constantProduct:
+  ∀ swap operation:
+    reserve0_post * reserve1_post >= reserve0_pre * reserve1_pre
+8.6 Bridge/Cross-Chain Invariants
+rule tokenPegConservation:
+  supply(chain1) + supply(chain2) == total_canonical_supply
+  OR bridge_message_in_flight
+8.7 Staking/Validator Invariants
+rule delegationLinearity:
+  ∑(delegated_balances[*]) <= total_liquid_staking_token_supply
+
+9. Fuzzing Strategies (Echidna/Foundry Patterns)
+9.1 Property-Based Invariants
+Core properties to fuzz:
+
+totalSupply(cToken) ∝ totalAssets — token supply ratio ==\text{==}
+== asset ratio after any deposit/withdraw\text{deposit/withdraw}
+deposit/withdraw sequence
+
+noZeroShareMint — no deposit/borrow\text{deposit/borrow}
+deposit/borrow mints zero shares/tokens
+
+**`noFundsCreation`** — (cash+borrows+reserves)start==(cash+borrows+reserves)end(\text{cash} + \text{borrows} + \text{reserves})_\text{start} == (\text{cash} + \text{borrows} + \text{reserves})_\text{end}
+(cash+borrows+reserves)start​==(cash+borrows+reserves)end​
+healthFactorExclusive — position is either healthy (≥1.0\ge 1.0
+≥1.0)
+OR liquidatable (<1.0< 1.0
+<1.0), never both
+
+noNegativeDebt — user debt always ≥0\ge 0
+≥0
+borrowIndexMonotonic — borrow index never decreases
+exchangeRateConsistent — exchange rate calculation deterministic for same state
+constantProductHolds — x×y≥kx \times y \ge k
+x×y≥k after every swap (DEX)
+
+delegationNoDoubleSpend — ∑(delegated)≤total_supply\sum(\text{delegated}) \le \text{total\_supply}
+∑(delegated)≤total_supply (staking)
+
+bridgeTokenPeg — supply(chain1)+supply(chain2)=total_canonical\text{supply(chain1)} + \text{supply(chain2)} = \text{total\_canonical}
+supply(chain1)+supply(chain2)=total_canonical
+
+9.2 Corpus-Guided Fuzzing
+
+Start with known exploit transactions as seed corpus
+Mutate sequence length (1 step→10 steps→100 steps\text{1 step} \to \text{10 steps} \to \text{100 steps}
+1 step→10 steps→100 steps)
+
+Mutate parameter ranges: {0, 1, type(uint256).max, boundary values}\{\text{0, 1, type(uint256).max, boundary values}\}
+{0, 1, type(uint256).max, boundary values}
+Combine stateful fuzzing with symbolic execution
+Use swarm testing to find coverage gaps preventing invariant breaks
+
+9.3 Critical Fuzz Targets
+Interest Accrual:
+
+block.number\text{block.number}
+block.number increments: \{\text{0, 1, 2^16-1, 2^32-1, max\_uint}\}
+
+Test overflow in delta×rate\text{delta} \times \text{rate}
+delta×rate calculations
+
+
+Exchange Rate Manipulation:
+
+Deposit amounts: {0, 1 wei, 1e6, 1e18, type(uint256).max}\{\text{0, 1 wei, 1e6, 1e18, type(uint256).max}\}
+{0, 1 wei, 1e6, 1e18, type(uint256).max}
+Exchange rate values: {1e18-1, 1e18, 1e18+1, 10e18, 0}\{\text{1e18-1, 1e18, 1e18+1, 10e18, 0}\}
+{1e18-1, 1e18, 1e18+1, 10e18, 0}
+
+Liquidation Edge Cases:
+
+reserves==0,utilization==100%,oracle stale\text{reserves} == 0, \text{utilization} == 100\%, \text{oracle stale}
+reserves==0,utilization==100%,oracle stale
+Health factor: {0.99e18, 1.0e18, 1.01e18}\{\text{0.99e18, 1.0e18, 1.01e18}\}
+{0.99e18, 1.0e18, 1.01e18}
+Liquidation bonus: {0, 5%, 10%, 50%}\{\text{0, 5\%, 10\%, 50\%}\}
+{0, 5%, 10%, 50%}
+
+Cross-Collateral:
+
+LTV combinations: {0%, 50%, 75%, 100%}\{\text{0\%, 50\%, 75\%, 100\%}\}
+{0%, 50%, 75%, 100%}
+Isolated assets: debt at {ceiling-1, ceiling, ceiling+1}\{\text{ceiling-1, ceiling, ceiling+1}\}
+{ceiling-1, ceiling, ceiling+1}
+
+Reentrancy:
+
+ERC-777 hooks during: {mint, borrow, liquidate, repay, withdraw}\{\text{mint, borrow, liquidate, repay, withdraw}\}
+{mint, borrow, liquidate, repay, withdraw}
+Fee-on-transfer tokens with varying fee: {0%, 1%, 10%, 99%}\{\text{0\%, 1\%, 10\%, 99\%}\}
+{0%, 1%, 10%, 99%}
+
+DEX/AMM:
+
+Swap amounts: {1 wei, 1e6, 1e18, reserve_size/2, reserve_size}\{\text{1 wei, 1e6, 1e18, reserve\_size/2, reserve\_size}\}
+{1 wei, 1e6, 1e18, reserve_size/2, reserve_size}
+Repeated micro-swaps: 100+ iterations\text{100+ iterations}
+100+ iterations
+Slippage tolerance: {0%, 0.5%, 5%, 50%}\{\text{0\%, 0.5\%, 5\%, 50\%}\}
+{0%, 0.5%, 5%, 50%}
+
+Bridge/Cross-Chain:
+
+Message nonces: {0, 1, last_processed, last_processed+1, type(uint256).max}\{\text{0, 1, last\_processed, last\_processed+1, type(uint256).max}\}
+{0, 1, last_processed, last_processed+1, type(uint256).max}
+Lock/mint amounts: {1 wei, total_supply/2, total_supply}\{\text{1 wei, total\_supply/2, total\_supply}\}
+{1 wei, total_supply/2, total_supply}
+Validator signatures: {0, 1, required-1, required, required+1}\{\text{0, 1, required-1, required, required+1}\}
+{0, 1, required-1, required, required+1}
+
+Staking/Validator:
+
+Delegation amounts: {1 wei, min_stake, max_stake, total_supply}\{\text{1 wei, min\_stake, max\_stake, total\_supply}\}
+{1 wei, min_stake, max_stake, total_supply}
+Validator balances: {min_effective_balance-1, min_effective_balance, min_effective_balance+1}\{\text{min\_effective\_balance-1, min\_effective\_balance, min\_effective\_balance+1}\}
+{min_effective_balance-1, min_effective_balance, min_effective_balance+1}
+Slashing penalties: {0, base_penalty, max_penalty}\{\text{0, base\_penalty, max\_penalty}\}
+{0, base_penalty, max_penalty}
+
+
+10. Protocol-Specific Exploit Patterns
+10.1 Compound/Aave Patterns
+Interest Accrual Boundaries:
+
+Delta==0\text{Delta} == 0
+Delta==0 blocks:
+NO state change
+Delta==1\text{Delta} == 1
+Delta==1 block: minimal interest
+
+Delta==232−1\text{Delta} == 2^32-1
+Delta==232−1: integer overflow mitigation required
+
+After totalBorrows=0\text{totalBorrows} = 0
+totalBorrows=0: total interest should be 0\text{0}
+0
+After rate=0\text{rate} = 0
+rate=0: borrow index immutable
+
+
+Math Error Handling:
+
+MATH_ERROR (code 9)→NO state changes\text{MATH\_ERROR (code 9)} \to \text{NO state changes}
+MATH_ERROR (code 9)→NO state changes
+Test: mint 1 wei, exchange rate 1e18, output rounds to 0\text{mint 1 wei, exchange rate 1e18, output rounds to 0}
+mint 1 wei, exchange rate 1e18, output rounds to 0
+Protocol must reject 0-share mints or flag dust
+
+Fresh Function Preconditions:
+
+mintFresh()\text{mintFresh()}
+mintFresh() requires accrueInterest()\text{accrueInterest()}
+accrueInterest() in same tx
+
+accrualBlockNumber≠currentBlock→return NOT_ACCRUED, revert\text{accrualBlockNumber} \ne \text{currentBlock} \to \text{return NOT\_ACCRUED, revert}
+accrualBlockNumber=currentBlock→return NOT_ACCRUED, revert
+Nested calls: mint→accrueInterest→mint\text{mint} \to \text{accrueInterest} \to \text{mint}
+mint→accrueInterest→mint must work
+
+Multiple mints in single tx: 2nd mint re-checks accrual\text{2nd mint re-checks accrual}
+2nd mint re-checks accrual
+
+10.2 Morpho/ERC-4626 Patterns
+Vault Inflation Attack:
+
+Empty vault: totalShares=0,totalAssets=0\text{totalShares} = 0, \text{totalAssets} = 0
+totalShares=0,totalAssets=0
+Attacker deposits 1 wei→receives 1 share\text{1 wei} \to \text{receives 1 share}
+1 wei→receives 1 share
+Attacker donates 10M tokens\text{10M tokens}
+10M tokens directly to vault
+
+share_price=10M/1=10M\text{share\_price} = 10\text{M}/1 = 10\text{M}
+share_price=10M/1=10M per share
+
+Victim deposits 1M tokens→receives 1M/10M=0.1 shares\text{1M tokens} \to \text{receives } 1\text{M}/10\text{M} = 0.1 \text{ shares}
+1M tokens→receives 1M/10M=0.1 shares (rounds to 0\text{0}
+0)
+
+Attacker withdraws: 1 share=11M tokens\text{1 share} = 11\text{M tokens}
+1 share=11M tokens
+
+Mitigation Tests:
+
+Dead shares at initialization (mint 1000 shares\text{mint 1000 shares}
+mint 1000 shares to address(1)\text{address(1)}
+address(1))
+
+Virtual assets/shares offset: exchangeRate=(totalAssets+1e18)/(totalShares+1e18)\text{exchangeRate} = (\text{totalAssets} + 1\text{e18}) / (\text{totalShares} + 1\text{e18})
+exchangeRate=(totalAssets+1e18)/(totalShares+1e18)
+Minimum deposit amount enforced
+
+10.3 Euler-Specific Patterns
+Mint-Donate-Liquidate:
+
+Deposit 20M DAI→receive 20M eDAI collateral\text{20M DAI} \to \text{receive 20M eDAI collateral}
+20M DAI→receive 20M eDAI collateral
+Mint 200M dDAI debt+195.6M eDAI\text{200M dDAI debt} + \text{195.6M eDAI}
+200M dDAI debt+195.6M eDAI (total 215.6M collateral vs 200M debt\text{total 215.6M collateral vs 200M debt}
+total 215.6M collateral vs 200M debt)
+
+Donate 100M eDAI to reserves (10x typical ratio\text{10x typical ratio}
+10x typical ratio)
+
+Collateral-to-debt ratio inverted →\to
+→ liquidation triggered
+
+Liquidate own position →receive 215.6M eDAI+bonus\to \text{receive 215.6M eDAI} + \text{bonus}
+→receive 215.6M eDAI+bonus
+Withdraw both eDAI\text{eDAI}
+eDAI layers →protocol drained\to \text{protocol drained}
+→protocol drained
+
+Test Requirements:
+
+donate()\text{donate()}
+donate() must
+NOT affect liquidation calculations
+Validate collateral ≥\ge
+≥ debt before &\&
+& after donate
+
+State validation required before liquidation execution
+
+10.4 Oracle Manipulation Sequences
+Flash Loan + Single-Block Manipulation:
+Block N:
+
+Flash borrow 10M USDC
+Buy 1M ETH on Uniswap (price → $2100)
+Use ETH as collateral, borrow 50M stables (oracle reads $2100)
+Liquidate self at original $2000 price (gain $100k value delta)
+Repay flash loan + fee → Profit: liquidation discount arbitrage
+
+Test: Oracle must update BEFORE liquidation; use TWAP if supported.
+Oracle Update Front-Running:
+
+Chainlink pushes price update (reduces LTV)
+Attacker sees mempool: updateOraclePrice(asset, newLowerPrice)\text{updateOraclePrice(asset, newLowerPrice)}
+updateOraclePrice(asset, newLowerPrice)
+Attacker front-runs: borrow max at old high price
+Oracle update executes →\to
+→ position becomes liquidatable
+
+Attacker self-liquidates or exits
+
+Test: Batch oracle updates atomically; enforce liquidation delay after price update.
+Partial Oracle Failure (Multi-Source):
+
+Protocol uses Chainlink + Uniswap V3 TWAP\text{+ Uniswap V3 TWAP}
++ Uniswap V3 TWAP
+Chainlink feed stalls (no update 1+ hour\text{1+ hour}
+1+ hour)
+
+Attacker manipulates Uniswap TWAP via large swaps
+Oracle only uses latest Uniswap price on Chainlink stall →\to
+→ manipulated
+
+
+Test: Oracle fallback must be correct; TWAP window large enough (>1 block> 1 \text{ block}
+>1 block).
+
+Cross-Collateral Oracle Attack:
+
+Collateral: yEarn LP token\text{yEarn LP token}
+yEarn LP token (value=reserve0×price0+reserve1×price1\text{value} = \text{reserve0} \times \text{price0} + \text{reserve1} \times \text{price1}
+value=reserve0×price0+reserve1×price1)
+
+Flash loan manipulates reserve0\text{reserve0}
+reserve0 significantly
+
+LP token price calculation error (rounding down) →\to
+→ inflated value
+
+Borrow at inflated collateral →\to
+→ liquidation profit
+
+
+Test: LP token pricing accounts for fee-on-withdraw, slippage, reserve independence.
+10.5 Liquidation Exploitation Patterns
+
+Self-Liquidation with Stale Oracle: User triggers oracle update→health temporarily improves. Borrow maximum during temp improvement. Health crashes when update executes→liquidator captures full penalty.\text{User triggers oracle update} \to \text{health temporarily improves. Borrow maximum during temp improvement. Health crashes when update executes} \to \text{liquidator captures full penalty.}
+User triggers oracle update→health temporarily improves. Borrow maximum during temp improvement. Health crashes when update executes→liquidator captures full penalty.
+Test: Oracle updates atomic with state changes; no intermediate states exploitable.
+Mispriced LP Tokens: Vault share valuation via flash-loan TVL inflation. Deposit 0.65M collateral→borrow 15M\text{Deposit 0.65M collateral} \to \text{borrow 15M}
+Deposit 0.65M collateral→borrow 15M.
+Test: Vault pricing resistant to flash-loan manipulation.
+Liquidation Reward Manipulation: Liquidator discount exploitable if collateral rebounds mid-liquidation. Slippage not bounded→liquidator profit uncapped\text{Liquidator discount exploitable if collateral rebounds mid-liquidation. Slippage not bounded} \to \text{liquidator profit uncapped}
+Liquidator discount exploitable if collateral rebounds mid-liquidation. Slippage not bounded→liquidator profit uncapped.
+Test: Liquidation uses consistent price throughout; no mid-liquidation oracle calls.
+Oracle Price Lag During Liquidation: Collateral: $100 (oracle), $95 (market)\text{\$100 (oracle), \$95 (market)}
+$100 (oracle), $95 (market). Seize at oracle price ($100 value). Swap at market price ($95), slippage to $92\text{Seize at oracle price (\$100 value). Swap at market price (\$95), slippage to \$92}
+Seize at oracle price ($100 value). Swap at market price ($95), slippage to $92. Liquidator loss: 8%\text{Liquidator loss: 8\%}
+Liquidator loss: 8%.
+Test: liquidationIncentive≥slippage+gas\text{liquidationIncentive} \ge \text{slippage} + \text{gas}
+liquidationIncentive≥slippage+gas; protocol covers negative-profitability liquidations from reserves.
+
+Liquidation Bonus Accumulation: Multiple underwater positions. Liquidator liquidates A, B, C, D→reserves depleted\text{Liquidator liquidates A, B, C, D} \to \text{reserves depleted}
+Liquidator liquidates A, B, C, D→reserves depleted. Position E underwater→NO liquidity for bonus→liquidation fails→bad debt\text{Position E underwater} \to \text{NO liquidity for bonus} \to \text{liquidation fails} \to \text{bad debt}
+Position E underwater→NO liquidity for bonus→liquidation fails→bad debt.
+Test: totalReserves≥liquidationBonusPool\text{totalReserves} \ge \text{liquidationBonusPool}
+totalReserves≥liquidationBonusPool before liquidation; implement priority queue.
+
+Collateral Price Rebound After Seize: Seize collateral at $95, oracle updates to $100 mid-liquidation. Liquidator swaps at $100 (arbitrage profit)\text{Seize collateral at \$95, oracle updates to \$100 mid-liquidation. Liquidator swaps at \$100 (arbitrage profit)}
+Seize collateral at $95, oracle updates to $100 mid-liquidation. Liquidator swaps at $100 (arbitrage pro
