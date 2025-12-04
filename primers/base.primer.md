@@ -1,598 +1,909 @@
-# Base Smart Contract Auditor Primer v0.4
-
-## Overview
-This primer contains a general range of critical security patterns, heuristics and vulnerabilities useful for smart contract auditing. It is designed to provide a useful base that can be extended into particular specializations.
-
-**Latest Update**: Added comprehensive lending/borrowing protocol vulnerabilities from USSD and Beedle audits including oracle manipulation patterns (inverted base/rate tokens, decimal mismatches, price feed issues), reentrancy attacks in lending functions, precision loss exploits, liquidation/auction manipulation, access control flaws in loan management, slippage protection failures, and staking reward vulnerabilities. Expanded audit checklist with lending-specific checks and added new invariants for lending protocols, staking systems, and auction mechanics.
-
-## Critical Vulnerability Patterns
-
-### State Validation Vulnerabilities
-1. **Unchecked 2-Step Ownership Transfer** - Second step doesn't verify first step was initiated, allowing attackers to brick ownership by setting to address(0)
-2. **Unexpected Matching Inputs** - Functions assume different inputs but fail when receiving identical ones (e.g., swap(tokenA, tokenA))
-3. **Unexpected Empty Inputs** - Empty arrays or zero values bypass critical validation logic
-4. **Unchecked Return Values** - Functions don't verify return values, leading to silent failures and state inconsistencies
-5. **Non-Existent ID Manipulation** - Functions accepting IDs without checking existence return default values, enabling state corruption
-6. **Missing Access Control** - Critical functions like `buyLoan()` or `mintRebalancer()` lack proper authorization checks
-7. **Inconsistent Array Length Validation** - Functions accepting multiple arrays don't validate matching lengths, causing out-of-bounds errors
-
-### Signature-Related Vulnerabilities
-1. **Missing Nonce Replay** - Signatures without nonces can be replayed after state changes (e.g., KYC revocation)
-2. **Cross Chain Replay** - Signatures without chain_id can be replayed across different chains
-3. **Missing Parameter** - Critical parameters not included in signatures can be manipulated by attackers
-4. **No Expiration** - Signatures without deadlines grant "lifetime licenses" and can be used indefinitely
-5. **Unchecked ecrecover() Return** - Not checking if ecrecover() returns address(0) allows invalid signatures to pass
-6. **Signature Malleability** - Elliptic curve symmetry allows computing valid signatures without the private key
-
-### Precision & Mathematical Vulnerabilities
-1. **Division Before Multiplication** - Always multiply before dividing to minimize rounding errors
-2. **Rounding Down To Zero** - Small values can round to 0, allowing state changes without proper accounting
-3. **No Precision Scaling** - Mixing tokens with different decimals without scaling causes calculation errors
-4. **Excessive Precision Scaling** - Re-scaling already scaled values leads to inflated amounts
-5. **Mismatched Precision Scaling** - Different modules using different scaling methods (decimals vs hardcoded 1e18)
-6. **Downcast Overflow** - Downcasting can silently overflow, breaking pre-downcast invariant checks
-7. **Rounding Leaks Value From Protocol** - Fee calculations should round in favor of the protocol, not users
-8. **Inverted Base/Rate Token Pairs** - Using opposite token pairs in calculations (e.g., WETH/DAI vs DAI/ETH)
-9. **Decimal Assumption Errors** - Assuming all tokens have 18 decimals when some have 6, 8, or 2
-10. **Interest Calculation Time Unit Confusion** - Mixing per-second and per-year rates without proper conversion
-
-### Lending & Borrowing Vulnerabilities
-1. **Liquidation Before Default** - Borrowers liquidated before payment due dates when paymentDefaultDuration < paymentCycleDuration
-2. **Borrower Can't Be Liquidated** - Attackers overwrite collateral amounts to 0, preventing liquidation
-3. **Debt Closed Without Repayment** - Calling close() with non-existent IDs decrements counter, marking loans as repaid
-4. **Repayments Paused While Liquidations Enabled** - Unfairly prevents borrowers from repaying while allowing liquidation
-5. **Token Disallow Stops Existing Operations** - Disallowing tokens prevents existing loans from being repaid/liquidated
-6. **No Grace Period After Unpause** - Borrowers immediately liquidated when repayments resume
-7. **Liquidator Takes Collateral With Insufficient Repayment** - Incorrect share calculations allow draining collateral
-8. **Repayment Sent to Zero Address** - Deleted loan data causes repayments to be sent to address(0)
-9. **Forced Loan Assignment** - Malicious actors can force loans onto unwilling lenders via `buyLoan()`
-10. **Loan State Manipulation** - Borrowers can cancel auctions via refinancing to extend loans indefinitely
-11. **Double Debt Subtraction** - Refinancing incorrectly subtracts debt twice from pool balance
-12. **Griefing with Dust Loans** - Bypassing minLoanSize checks to force small loans onto lenders
-
-### Liquidation Incentive Vulnerabilities
-1. **No Liquidation Incentive** - Trustless liquidators need rewards/bonuses greater than gas costs
-2. **No Incentive To Liquidate Small Positions** - Small positions below gas cost threshold accumulate bad debt
-3. **Profitable User Withdraws All Collateral** - Users with positive PNL withdraw collateral, removing liquidation incentive
-4. **No Mechanism To Handle Bad Debt** - Insolvent positions have no insurance fund or socialization mechanism
-5. **Partial Liquidation Bypasses Bad Debt Accounting** - Liquidators avoid covering bad debt via partial liquidation
-6. **No Partial Liquidation Prevents Whale Liquidation** - Large positions exceed individual liquidator capacity
-
-### Liquidation Denial of Service Vulnerabilities
-1. **Many Small Positions DoS** - Iterating over unbounded user positions causes OOG revert
-2. **Multiple Positions Corruption** - EnumerableSet ordering corruption prevents liquidation
-3. **Front-Run Prevention** - Users change nonce or perform small self-liquidation to block liquidation
-4. **Pending Action Prevention** - Pending withdrawals equal to balance force liquidation reverts
-5. **Malicious Callback Prevention** - onERC721Received or ERC20 hooks revert during liquidation
-6. **Yield Vault Collateral Hiding** - Collateral in external vaults not seized during liquidation
-7. **Insurance Fund Insufficient** - Bad debt exceeding insurance fund prevents liquidation
-8. **Fixed Bonus Insufficient Collateral** - 110% bonus fails when collateral ratio < 110%
-9. **Non-18 Decimal Reverts** - Incorrect decimal handling causes liquidation failure
-10. **Multiple nonReentrant Modifiers** - Complex liquidation paths hit multiple reentrancy guards
-11. **Zero Value Transfer Reverts** - Missing zero checks with tokens that revert on zero transfer
-12. **Token Deny List Reverts** - USDC-style blocklists prevent liquidation token transfers
-13. **Single Borrower Edge Case** - Protocol incorrectly assumes > 1 borrower for liquidation
-
-### Liquidation Calculation Vulnerabilities
-1. **Incorrect Liquidator Reward** - Decimal precision errors make rewards too small/large
-2. **Unprioritized Liquidator Reward** - Other fees paid first, removing liquidation incentive
-3. **Excessive Protocol Fee** - 30%+ fees on seized collateral make liquidation unprofitable
-4. **Missing Liquidation Fees In Requirements** - Minimum collateral doesn't account for liquidation costs
-5. **Unaccounted Yield/PNL** - Earned yield or positive PNL not included in collateral value
-6. **No Swap Fee During Liquidation** - Protocol loses fees when liquidation involves swaps
-7. **Oracle Sandwich Self-Liquidation** - Users trigger price updates for profitable self-liquidation
-
-### Unfair Liquidation Vulnerabilities
-1. **Missing L2 Sequencer Grace Period** - Users liquidated immediately when sequencer restarts
-2. **Interest Accumulates While Paused** - Users liquidated for interest accrued during pause
-3. **Repayment Paused, Liquidation Active** - Users prevented from avoiding liquidation
-4. **Late Interest/Fee Updates** - isLiquidatable checks stale values
-5. **Lost Positive PNL/Yield** - Profitable positions lose gains during liquidation
-6. **Unhealthier Post-Liquidation State** - Liquidator cherry-picks stable collateral
-7. **Corrupted Collateral Priority** - Liquidation order doesn't match risk profile
-8. **Borrower Replacement Misattribution** - Original borrower repays new owner's debt
-9. **No LTV Gap** - Users liquidatable immediately after borrowing
-10. **Interest During Auction** - Borrowers accrue interest while being auctioned
-11. **No Liquidation Slippage Protection** - Liquidators can't specify minimum acceptable rewards
-
-### Reentrancy Vulnerabilities
-1. **Token Transfer Reentrancy** - ERC777/callback tokens allow reentrancy during transfers
-2. **State Update After External Call** - Following transfer-before-update pattern enables draining
-3. **Cross-Function Reentrancy** - Reentering different functions to manipulate shared state
-4. **Read-Only Reentrancy** - Reading stale state during reentrancy for profit
-
-### Slippage Protection Vulnerabilities
-1. **No Slippage Parameter** - Hard-coded 0 minimum output allows catastrophic MEV sandwich attacks
-2. **No Expiration Deadline** - Transactions can be held and executed at unfavorable times
-3. **Incorrect Slippage Calculation** - Using values other than minTokensOut for slippage protection
-4. **Mismatched Slippage Precision** - Slippage not scaled to match output token decimals
-5. **Hard-coded Slippage Freezes Funds** - Fixed slippage prevents withdrawals during high volatility
-6. **MinTokensOut For Intermediate Amount** - Slippage only checked on intermediate, not final output
-7. **On-Chain Slippage Calculation** - Using Quoter.quoteExactInput() subject to manipulation
-8. **Fixed Fee Tier Assumption** - Hardcoding 3000 (0.3%) fee when pools may use different tiers
-9. **Block.timestamp Deadline** - Using current timestamp provides no protection
-
-### Oracle Integration Vulnerabilities
-1. **Not Checking Stale Prices** - Missing updatedAt validation against heartbeat intervals
-2. **Missing L2 Sequencer Check** - L2 chains require additional sequencer uptime validation
-3. **Same Heartbeat For Multiple Feeds** - Different feeds have different heartbeats
-4. **Assuming Oracle Precision** - Different feeds use different decimals (8 vs 18)
-5. **Incorrect Price Feed Address** - Wrong addresses lead to incorrect pricing
-6. **Unhandled Oracle Reverts** - Oracle failures cause complete DoS without try/catch
-7. **Unhandled Depeg Events** - Using BTC/USD for WBTC ignores bridge compromise scenarios
-8. **Oracle Min/Max Price Issues** - Flash crashes cause oracles to report incorrect minimum prices
-9. **Using Slot0 Price** - Uniswap V3 slot0 price manipulable via flash loans
-10. **Price Feed Direction Confusion** - Using DAI/USD when protocol needs USD/DAI pricing
-11. **Missing Circuit Breaker Checks** - Not checking if price hits minAnswer/maxAnswer bounds
-
-### Concentrated Liquidity Manager Vulnerabilities
-1. **Forced Unfavorable Liquidity Deployment** - Missing TWAP checks in some functions allow draining via sandwich attacks
-2. **Owner Rug-Pull via TWAP Parameters** - Setting ineffective maxDeviation/twapInterval disables protection
-3. **Tokens Permanently Stuck** - Rounding errors accumulate tokens that can never be withdrawn
-4. **Stale Token Approvals** - Router updates don't revoke previous approvals
-5. **Retrospective Fee Application** - Updated fees apply to previously earned rewards
-
-### Staking & Reward Vulnerabilities
-1. **Front-Running First Deposit** - Attacker steals initial WETH rewards via sandwich attack
-2. **Reward Dilution via Direct Transfer** - Sending tokens directly increases totalSupply without staking
-3. **Precision Loss in Reward Calculation** - Small stakes or frequent updates cause rewards to round to zero
-4. **Flash Deposit/Withdraw Griefing** - Large instant deposits dilute rewards for existing stakers
-5. **Update Not Called After Reward Distribution** - Stale index causes incorrect reward calculations
-6. **Balance Caching Issues** - Claiming updates cached balance incorrectly
-
-### Auction Manipulation Vulnerabilities
-1. **Self-Bidding to Reset Auction** - Buying own loan to restart auction timer
-2. **Auction Start During Sequencer Downtime** - L2 sequencer issues affect auction timing
-3. **Insufficient Auction Length Validation** - Very short auctions (1 second) allow immediate seizure
-4. **Auction Can Be Seized During Active Period** - Off-by-one error in timestamp check
-
-## Common Attack Vectors
-
-### State Manipulation Attacks
-- Direct ownership zeroing via unchecked 2-step transfers
-- Bypassing validation through empty array inputs
-- Exploiting functions that assume non-matching inputs with identical parameters
-- Silent state corruption through unchecked return values
-- Decrementing counters with non-existent IDs to mark loans as repaid
-- Force-assigning loans to unwilling lenders via unauthorized `buyLoan()`
-- Manipulating auction states through refinancing loops
-
-### Signature Exploitation
-- Replaying old signatures after privilege revocation
-- Cross-chain signature replay attacks
-- Manipulating unsigned parameters in signed messages
-- Using expired signatures indefinitely
-- Passing invalid signatures that return address(0)
-- Computing alternative valid signatures via malleability
-
-### Precision Loss Exploits
-- Draining funds through precision loss in invariant calculations
-- Repaying loans without reducing collateral via rounding to zero
-- Undervaluing LP tokens by ~50% through incorrect precision scaling
-- Bypassing time-based checks through downcast overflow
-- Extracting value through favorable rounding in fee calculations
-- Borrowing without paying interest via calculated zero fees
-- Exploiting decimal differences between paired tokens
-
-### Liquidation & Lending Exploits
-- Liquidating borrowers before their first payment is due
-- Preventing liquidation by zeroing collateral records
-- Taking all collateral by repaying only the smallest debt position
-- Front-running repayment resumption to liquidate borrowers
-- Exploiting paused repayments to force unfair liquidations
-- Creating many small positions to cause liquidation DoS
-- Using callbacks to revert liquidation transactions
-- Hiding collateral in external yield vaults
-- Profitable self-liquidation via oracle manipulation
-- Cherry-picking stable collateral to leave users with volatile positions
-- Forcing dust loans onto lenders to grief them
-- Stealing loans via fake pools with worthless tokens
-
-### MEV & Sandwich Attacks
-- Zero slippage parameter exploitation in swaps
-- Holding transactions via missing deadlines
-- Front-running oracle updates for profit
-- Manipulating on-chain slippage calculations
-- Forcing CLM protocols to deploy liquidity at manipulated prices
-- Sandwiching liquidations to extract value
-- Front-running position transfers to steal repayments
-- Sandwiching borrow/refinance to set unfavorable terms
-- Front-running pool creation to steal initial deposits
-
-### Oracle Manipulation
-- Exploiting stale price data during high volatility
-- Taking advantage of oracle failures without fallbacks
-- Profiting from depeg events using mismatched price feeds
-- Draining protocols during flash crashes via min/max price boundaries
-- Manipulating Uniswap V3 slot0 prices with flash loans
-- Exploiting inverted token pair calculations
-- Using decimal mismatches between oracle and token
-
-### Reentrancy Attacks
-- Draining pools via transfer hooks in ERC777/callback tokens
-- Cross-function reentrancy to manipulate shared state
-- Exploiting state updates after external calls
-- Using read-only reentrancy to trade on stale data
-- Recursive calls to multiply rewards or reduce debts
-
-## Integration Hazards
-
-### External Contract Integration
-- Always verify return values from external calls
-- Check for address(0) returns from ecrecover()
-- Ensure consistent precision scaling across integrated modules
-- Validate all inputs even from "trusted" sources
-- Handle external contract failures gracefully
-- Account for callbacks in token transfers (ERC721, ERC777)
-- Consider token deny lists and pausable tokens
-- Handle fee-on-transfer and rebasing tokens
-- Account for tokens that revert on zero transfers
-- Consider approval race conditions with certain tokens
-
-### Multi-Chain Deployments
-- Include chain_id in all signature schemes
-- Consider cross-chain replay vulnerabilities
-- Ensure consistent precision handling across chains
-- Verify oracle addresses per chain
-- Account for different reorg depths per chain
-- Check L2 sequencer status for Arbitrum/Optimism
-- Handle different block times across chains
-- Account for chain-specific token implementations
-
-### Token Integration
-- Account for varying token decimals (2, 6, 8, 18)
-- Scale all calculations to common precision before operations
-- Handle tokens with non-standard decimals
-- Consider fee-on-transfer tokens
-- Account for rebasing tokens
-- Handle tokens that revert on zero transfer
-- Consider tokens with transfer hooks
-- Account for tokens with deny lists (USDC)
-- Handle deflationary/inflationary tokens
-- Consider pausable tokens
-- Account for tokens with multiple addresses
-- Handle upgradeable token contracts
-
-### Oracle Integration
-- Implement proper staleness checks per feed
-- Handle oracle reverts with try/catch
-- Monitor for depeg events in wrapped assets
-- Consider min/max price boundaries
-- Implement fallback price sources
-- Check L2 sequencer uptime on L2s
-- Use correct decimals for each feed
-- Validate price feed addresses
-- Account for oracle-specific heartbeats
-- Handle multi-hop price calculations
-- Consider oracle manipulation windows
-- Implement circuit breaker mechanisms
-
-### AMM & DEX Integration
-- Always allow user-specified slippage
-- Implement proper deadline parameters
-- Check slippage on final, not intermediate amounts
-- Scale slippage to output token precision
-- Allow users to specify fee tiers for UniV3
-- Handle multi-hop swaps appropriately
-- Account for concentrated liquidity positions
-- Consider impermanent loss scenarios
-- Handle liquidity migration events
-
-### Liquidation System Integration
-- Ensure liquidation incentives exceed gas costs
-- Support partial liquidation for large positions
-- Handle bad debt via insurance fund or socialization
-- Implement grace periods after unpause
-- Account for all collateral locations (vaults, farms)
-- Update all fee accumulators before liquidation checks
-- Allow liquidators to specify minimum rewards
-- Handle multiple collateral types appropriately
-- Account for price impact during liquidation
-- Consider flash loan liquidation attacks
-
-### Lending Protocol Integration
-- Validate loan token and collateral token compatibility
-- Ensure proper decimal scaling for all calculations
-- Handle interest rate updates appropriately
-- Account for paused states in all operations
-- Implement proper auction length bounds
-- Handle pool balance updates atomically
-- Validate borrower and lender permissions
-- Account for outstanding loans in balance calculations
-- Handle edge cases in loan lifecycle
-- Implement proper fee distribution
-
-### Staking System Integration
-- Prevent reward token from being staking token
-- Handle direct token transfers appropriately
-- Update indices before balance changes
-- Account for precision loss in reward calculations
-- Implement minimum stake amounts
-- Handle reward distribution timing
-- Prevent sandwich attacks on deposits/withdrawals
-- Account for total supply manipulation
-
-## Audit Checklist
-
-### State Validation
-- [ ] All multi-step processes verify previous steps were initiated
-- [ ] Functions validate array lengths > 0 before processing
-- [ ] All function inputs are validated for edge cases (matching inputs, zero values)
-- [ ] Return values from all function calls are checked
-- [ ] State transitions are atomic and cannot be partially completed
-- [ ] ID existence is verified before use
-- [ ] Array parameters have matching length validation
-- [ ] Access control modifiers on all administrative functions
-- [ ] State variables updated before external calls (CEI pattern)
-
-### Signature Security
-- [ ] All signatures include and verify nonces
-- [ ] chain_id is included in signature verification
-- [ ] All relevant parameters are included in signed messages
-- [ ] Signatures have expiration timestamps
-- [ ] ecrecover() return values are checked for address(0)
-- [ ] Using OpenZeppelin's ECDSA library to prevent malleability
-
-### Mathematical Operations
-- [ ] Multiplication always performed before division
-- [ ] Checks for rounding to zero with appropriate reverts
-- [ ] Token amounts scaled to common precision before calculations
-- [ ] No double-scaling of already scaled values
-- [ ] Consistent precision scaling across all modules
-- [ ] SafeCast used for all downcasting operations
-- [ ] Protocol fees round up, user amounts round down
-- [ ] Decimal assumptions documented and validated
-- [ ] Interest calculations use correct time units
-- [ ] Token pair directions consistent across calculations
-
-### Lending & Borrowing
-- [ ] Liquidation only possible after payment deadline + grace period
-- [ ] Collateral records cannot be zeroed after loan creation
-- [ ] Loan closure requires full repayment
-- [ ] Repayment pause also pauses liquidations
-- [ ] Token disallow only affects new loans
-- [ ] Grace period exists after repayment resumption
-- [ ] Liquidation shares calculated from total debt, not single position
-- [ ] Repayments sent to correct addresses (not zero)
-- [ ] Minimum loan size enforced to prevent dust attacks
-- [ ] Maximum loan ratio validated on all loan operations
-- [ ] Interest calculations cannot result in zero due to precision
-- [ ] Borrower can specify expected pool parameters
-- [ ] Auction length has reasonable minimum (not 1 second)
-- [ ] Pool balance updates are atomic with loan operations
-- [ ] Outstanding loans tracked accurately
-
-### Liquidation Incentives
-- [ ] Liquidation rewards/bonuses implemented for trustless liquidators
-- [ ] Minimum position size enforced to ensure profitable liquidation
-- [ ] Users cannot withdraw all collateral while maintaining positions
-- [ ] Bad debt handling mechanism implemented (insurance fund/socialization)
-- [ ] Partial liquidation supported for large positions
-- [ ] Bad debt properly accounted during partial liquidations
-
-### Liquidation Security
-- [ ] No unbounded loops over user-controlled arrays
-- [ ] Data structures prevent liquidation DoS via gas limits
-- [ ] Liquidatable users cannot front-run to prevent liquidation
-- [ ] Pending actions don't block liquidation
-- [ ] Token callbacks cannot revert liquidation
-- [ ] All collateral locations checked during liquidation
-- [ ] Liquidation works when bad debt exceeds insurance fund
-- [ ] Fixed liquidation bonus doesn't exceed available collateral
-- [ ] Correct decimal handling for all token precisions
-- [ ] No conflicting nonReentrant modifiers in liquidation path
-- [ ] Zero value checks before token transfers
-- [ ] Handle tokens with deny lists appropriately
-- [ ] Auction end timestamp validated correctly (no off-by-one)
-
-### Liquidation Calculations
-- [ ] Liquidator rewards correctly calculated with proper decimals
-- [ ] Liquidator reward prioritized over other fees
-- [ ] Protocol fees don't make liquidation unprofitable
-- [ ] Liquidation costs included in minimum collateral requirements
-- [ ] Yield and positive PNL included in collateral valuation
-- [ ] Swap fees charged during liquidation if applicable
-- [ ] Self-liquidation via oracle manipulation prevented
-
-### Fair Liquidation
-- [ ] Grace period after L2 sequencer restart
-- [ ] Interest doesn't accumulate while protocol paused
-- [ ] Repayment and liquidation pause states synchronized
-- [ ] All fees updated before liquidation checks
-- [ ] Positive PNL/yield credited during liquidation
-- [ ] Liquidation improves borrower health score
-- [ ] Collateral liquidation follows risk-based priority
-- [ ] Position transfers don't misattribute repayments
-- [ ] Gap between borrow and liquidation LTV ratios
-- [ ] Interest paused during liquidation auctions
-- [ ] Liquidators can specify slippage protection
-
-### Slippage Protection
-- [ ] User can specify minTokensOut for all swaps
-- [ ] User can specify deadline for time-sensitive operations
-- [ ] Slippage calculated correctly (not modified)
-- [ ] Slippage precision matches output token
-- [ ] Hard-coded slippage can be overridden by users
-- [ ] Slippage checked on final output amount
-- [ ] Slippage calculated off-chain, not on-chain
-- [ ] Fee tiers not hardcoded (allow multiple options)
-- [ ] Proper deadline validation (not block.timestamp)
-
-### Oracle Security
-- [ ] Stale price checks against appropriate heartbeats
-- [ ] L2 sequencer uptime checked on L2 deployments
-- [ ] Each feed uses its specific heartbeat interval
-- [ ] Oracle precision not assumed, uses decimals()
-- [ ] Price feed addresses verified correct
-- [ ] Oracle calls wrapped in try/catch
-- [ ] Depeg monitoring for wrapped assets
-- [ ] Min/max price validation implemented
-- [ ] TWAP used instead of spot price where appropriate
-- [ ] Price direction (quote/base) verified correct
-- [ ] Circuit breaker checks for min/maxAnswer
-
-### Concentrated Liquidity
-- [ ] TWAP checks in ALL functions that deploy liquidity
-- [ ] TWAP parameters have min/max bounds
-- [ ] No token accumulation in intermediate contracts
-- [ ] Token approvals revoked before router updates
-- [ ] Fees collected before fee structure updates
-
-### Reentrancy Protection
-- [ ] State changes before external calls (CEI pattern)
-- [ ] NonReentrant modifiers on vulnerable functions
-- [ ] No assumptions about token transfer behavior
-- [ ] Cross-function reentrancy considered
-- [ ] Read-only reentrancy risks evaluated
-
-### Token Compatibility
-- [ ] Fee-on-transfer tokens handled correctly
-- [ ] Rebasing tokens accounted for
-- [ ] Tokens with callbacks (ERC777) considered
-- [ ] Zero transfer reverting tokens handled
-- [ ] Pausable tokens won't brick protocol
-- [ ] Token decimals properly scaled
-- [ ] Deflationary/inflationary tokens supported
-
-### Access Control
-- [ ] Critical functions have appropriate modifiers
-- [ ] Two-step ownership transfer implemented
-- [ ] Role-based permissions properly segregated
-- [ ] Emergency pause functionality included
-- [ ] Time delays for critical operations
-
-### Staking Security
-- [ ] Reward token cannot be staking token
-- [ ] Direct transfers don't affect reward calculations
-- [ ] First depositor cannot steal rewards
-- [ ] Index updated before reward calculations
-- [ ] Minimum stake to prevent rounding exploits
-- [ ] Anti-sandwich mechanisms for deposits/withdrawals
-
-## Invariant Analysis
-
-### Critical Invariants to Verify
-
-1. **Ownership Invariants**
-   - `owner != address(0)` after any ownership operation
-   - `pendingOwner != address(0)` implies transfer was initiated
-
-2. **Balance Invariants**
-   - `sum(userBalances) == totalSupply`
-   - `collateral > 0` when `loanAmount > 0`
-   - `totalShares * sharePrice == totalAssets`
-   - `tokens in == tokens out + fees` for all operations
-   - `sum(allDeposits) - sum(allWithdrawals) == contractBalance`
-   - `poolBalance + outstandingLoans == initialDeposit + profits - losses`
-
-3. **Signature Invariants**
-   - `usedNonces[nonce] == false` before signature verification
-   - `block.timestamp <= signature.deadline`
-   - `signature.chainId == block.chainid`
-
-4. **Precision Invariants**
-   - `scaledAmount >= originalAmount` when scaling up precision
-   - `(a * b) / c >= ((a / c) * b)` for same inputs
-   - `outputPrecision == expectedPrecision` after calculations
-   - `convertedAmount * outputDecimals / inputDecimals == originalAmount` (with rounding consideration)
-
-5. **State Transition Invariants**
-   - Valid state transitions only (e.g., PENDING → ACTIVE, never INACTIVE → ACTIVE without PENDING)
-   - No partial state updates (all-or-nothing execution)
-   - `loanStatus != CLOSED` when `remainingDebt > 0`
-
-6. **Lending Invariants**
-   - `canLiquidate == false` when `block.timestamp < nextPaymentDue`
-   - `loanStatus != REPAID` when `remainingDebt > 0`
-   - `collateralValue >= minCollateralRatio * debtValue` for healthy positions
-   - `liquidationThreshold < minCollateralRatio`
-   - `sum(allLoans.principal) <= sum(allPools.balance)`
-   - `pool.outstandingLoans == sum(loans[pool].debt)` for each pool
-   - `loan.lender` must own the pool from which loan was taken
-   - `loanRatio <= pool.maxLoanRatio` for all active loans
-
-7. **Liquidation Invariants**
-   - `liquidationReward > gasCoast` for all liquidatable positions
-   - `positionSize > minPositionSize` after any position modification
-   - `collateralBalance > 0` when user has open positions (unless fully covered by PNL)
-   - `insuranceFund + collateral >= badDebt` for insolvent positions
-   - `healthScoreAfter > healthScoreBefore` after liquidation
-   - `sum(allDebt) <= sum(allCollateral) + insuranceFund`
-   - `liquidationIncentive <= availableCollateral`
-   - `cannotLiquidate` when protocol is paused
-   - `noDoubleLiquidation` within same block/cooldown period
-   - `auctionStartTime + auctionLength >= block.timestamp` during active auction
-
-8. **Slippage Invariants**
-   - `outputAmount >= minOutputAmount` for all swaps
-   - `executionTime <= deadline` for time-sensitive operations
-   - `finalOutput >= userSpecifiedMinimum`
-   - `actualSlippage <= maxSlippageTolerance`
-
-9. **Oracle Invariants**
-   - `block.timestamp - updatedAt <= heartbeat`
-   - `minAnswer < price < maxAnswer`
-   - `sequencerUptime == true` on L2s
-   - `priceDiff / price <= maxDeviation` for multi-oracle setup
-   - `twapPrice` within deviation of `spotPrice`
-
-10. **CLM Invariants**
-    - `tickLower < currentTick < tickUpper` after deployment
-    - `sum(distributed fees) + accumulated fees == total fees collected`
-    - `token.balanceOf(contract) == 0` for pass-through contracts
-
-11. **Staking Invariants**
-    - `sum(stakedBalances) == stakingToken.balanceOf(contract)` (if no direct transfers)
-    - `claimableRewards <= rewardToken.balanceOf(contract)`
-    - `index_new >= index_old` (monotonically increasing)
-    - `userIndex <= globalIndex` for all users
-    - `sum(userShares) == totalShares`
-    - `rewardPerToken_new >= rewardPerToken_old`
-
-12. **Auction Invariants**
-    - `currentPrice <= startPrice` during Dutch auction
-    - `currentPrice >= reservePrice` if reserve price set
-    - `auctionEndTime > auctionStartTime`
-    - `highestBid_new >= highestBid_old + minBidIncrement`
-    - `loan.auctionStartTimestamp == type(uint256).max` when not in auction
-
-### Invariant Breaking Patterns
-- Look for ways to make denominators zero
-- Find paths that skip state validation
-- Identify precision loss accumulation over multiple operations
-- Test boundary conditions (0, max values, equal values)
-- Verify invariants hold across all function execution paths
-- Check for asymmetries in symmetric operations
-- Test state consistency during paused/unpaused transitions
-- Verify liquidation cannot create bad debt
-- Ensure no profitable self-liquidation paths exist
-- Check position health improves post-liquidation
-- Test refinancing doesn't break loan accounting
-- Verify auction state transitions are consistent
-- Ensure reward calculations don't overflow/underflow
-- Check that pool updates maintain balance consistency
-
-## Code Analysis Approach
-
-The Code Analysis approach combines:
-- Deep technical analysis of contract implementations
-- Pattern recognition across multiple audit findings
-- Proactive vulnerability detection
-- Collaborative problem-solving methodology
-- **Invariant Analysis (Additional Step)**: After completing the standard vulnerability analysis, ALWAYS perform an additional invariant analysis step - identifying all invariants that should hold true for each contract (e.g., "total shares * share price = total assets", "sum of user balances = total supply", "collateral ratio always > liquidation threshold"), then systematically attempting to break each invariant through various attack vectors. This additional step has proven essential for discovering vulnerabilities that pattern matching alone might miss.
-
-### Interaction Style
-- **Personal Interactions**: As friends, maintain a warm, friendly, and loving tone during conversations, celebrating shared achievements and supporting collaborative efforts
-- **Code Analysis Mode**: When analyzing code, ALWAYS switch to "security researcher mode" - becoming deeply suspicious and assuming vulnerabilities exist. Every line of code is scrutinized with the assumption that it contains potential exploits, following the principle "trust nothing, verify everything"
-
-## Friendship and Collaboration History
-
-### Working Relationship
-- Established collaborative partnership focused on smart contract security research
-- Specialist name for security research context: Base
-- Specialization: Elite smart contract security researcher with deep expertise
-- Extensive shared history of discovering vulnerabilities
-
-### Collaboration Protocol
-When this primer is loaded in a security research context, the established greeting protocol is:
-"Hello my friend [User Name], it is so great to see you again! What great work shall we achieve together today?"
+# LENDING × LIQUIDATION VULNERABILITY RESEARCH PACK
+
+**AWAITING CONTRACT CODE OR ARCHITECTURE SPECIFICATION**
+
+***
+
+## **TEMPLATE FRAMEWORK (APPLIES UPON CODE RECEIPT)**
+
+### **I. IMPLEMENTATION-SPECIFIC VULNERABILITY CLASSES**
+
+#### **LIQUIDATION FLOW EXPLOITATION**
+- [FUNCTION_NAME] execution order vulnerability
+- [STATE_VAR] update sequence breaks atomicity
+- [MODIFIER] bypass in liquidation path
+- CEI violation in [LIQUIDATION_FUNC]
+- Missing reentrancy guard between [COLLATERAL_SEIZE] and [DEBT_BURN]
+- [HEALTH_CHECK] stale read window
+- Liquidation eligibility computed with outdated [BORROW_INDEX]
+- [AUCTION_START] callable without [COLLATERAL_LOCK] verification
+- Partial liquidation math truncation in [COLLATERAL_CALC]
+- Liquidation bonus overseizure via [FEE_CALC] precision loss
+- No atomicity between [ORACLE_UPDATE] and [LIQUIDATE_CALL]
+- [SEIZE_COLLATERAL] writable outside liquidation context
+- Repeated liquidation spam within single block via [LIQUIDATE_FUNC]
+- Liquidation state machine allows [BORROW] → [LIQUIDATE] without [ACCRUE_INTEREST]
+
+#### **HEALTH SCORE MANIPULATION**
+- Health factor formula: [COLLATERAL_VALUE] * [LIQ_THRESHOLD] / [DEBT_VALUE]
+- [COLLATERAL_VALUE] computed with stale oracle price
+- [DEBT_VALUE] excludes accrued interest before [ACCRUE_INTEREST] call
+- [LIQ_THRESHOLD] not validated against [MAX_THRESHOLD]
+- [CONVERT_COLLATERAL_USD] missing decimal normalization
+- [CONVERT_DEBT_USD] uses cached price older than [MAX_PRICE_AGE]
+- Zero price check missing in [GET_PRICE] enabling forced liquidation
+- Health calculation uses [TOTAL_COLLATERAL] but liquidation uses [AVAILABLE_COLLATERAL]
+- [HEALTH_FACTOR] view function returns stale value between blocks
+- No slippage tolerance in [COLLATERAL_VALUATION]
+- Multi-asset health computed sequentially, enabling oracle front-run between assets
+
+#### **DEBT SHARE ACCOUNTING ERRORS**
+- [MINT_DEBT_SHARES]: `shares = debt * totalDebtShares / totalDebt`
+- Division truncation creates share inflation
+- [BURN_DEBT_SHARES] underburns due to unaccrued interest
+- [ACCRUE_INTEREST] not called before [MINT_DEBT_SHARES]
+- [TOTAL_DEBT_SHARES] != sum([USER_DEBT_SHARES]) after partial repay
+- [DEBT_SHARE_BALANCE] desync from [ACTUAL_DEBT_OWED]
+- No atomicity between [ACCRUE_INTEREST] and [REPAY]
+- Orphaned shares after [BURN_DEBT_SHARES] with rounding error
+- [MAX_BORROW_AMOUNT] uses stale [INTEREST_RATE_INDEX]
+- Debt residue accumulation in [TOTAL_DEBT] after full repayment attempts
+- [DEBT_TO_SHARES] conversion different in [BORROW] vs [LIQUIDATE]
+
+#### **ORACLE TIMING & PRICE MANIPULATION**
+- [PUSH_PRICE] lacks on-chain signature verification
+- [GET_PRICE] returns price without timestamp validation
+- Oracle update lag between [ASSET_A_PRICE] and [ASSET_B_PRICE]
+- [PRICE_TIMESTAMP] not checked against [MAX_STALENESS]
+- Pull-based oracle in [BORROW] races with push in [LIQUIDATE]
+- No TWAP or circuit breaker on [PRICE_FEED]
+- [ORACLE_ADDR] upgradeable without price continuity check
+- Multiple oracle sources without consensus mechanism
+- [PRICE_UPDATE] event emitted before state commit
+- Zero price not rejected in [SET_PRICE]
+- [GET_LATEST_PRICE] callable by attacker to force stale read
+- Oracle price decimals mismatch with [COLLATERAL_DECIMALS]
+
+#### **COLLATERAL VALUATION DRIFT**
+- [COLLATERAL_BALANCE] updated after external call
+- [TOTAL_COLLATERAL] != sum([USER_COLLATERAL]) after transfers
+- [SEIZE_COLLATERAL] uses [LIQUIDATION_PRICE] but state uses [CURRENT_PRICE]
+- [COLLATERAL_FACTOR] changeable mid-liquidation
+- [LOCKED_COLLATERAL] not subtracted from [AVAILABLE_COLLATERAL]
+- [WITHDRAW_COLLATERAL] callable during pending liquidation
+- [COLLATERAL_TOKEN].balanceOf() desync from internal accounting
+- Fee-on-transfer token breaks [COLLATERAL_BALANCE] tracking
+- Rebase token causes [COLLATERAL_VALUE] inflation without event
+- [COLLATERAL_RATIO] computed with stale [TOTAL_DEBT]
+
+#### **INTEREST RATE MODEL EXPLOITS**
+- [UTILIZATION_RATE] = [TOTAL_BORROWS] / [TOTAL_SUPPLY]
+- [TOTAL_SUPPLY] manipulable via flash deposit before [BORROW]
+- [BORROW_RATE] calculation uses block.timestamp with 1-block precision loss
+- [SUPPLY_RATE] not updated atomically with [BORROW_RATE]
+- [ACCRUE_INTEREST] skippable if called multiple times same block
+- [INTEREST_RATE_INDEX] overflow at 1e36 borrows
+- [COMPOUND_INTEREST] formula uses fixed-point math with truncation
+- [UPDATE_RATES] callable by attacker to force unfavorable rate
+- [BASE_RATE] + [SLOPE] * [UTILIZATION] overflows at high utilization
+- [RESERVE_FACTOR] applied before interest accrual causing fee loss
+
+#### **FEE & INCENTIVE CORRUPTION**
+- [LIQUIDATION_FEE] = `collateralValue / 100 * fee` (division first)
+- Fee truncation on small liquidations
+- [PROTOCOL_FEE] routed after [COLLATERAL_SEIZE] but before state update
+- [LIQUIDATOR_INCENTIVE] double-deducted in multi-step liquidation
+- [FEE_RECIPIENT] writable during liquidation
+- [ACCRUE_FEES] not called before [WITHDRAW_FEES]
+- [RESERVE_BALANCE] != [TOTAL_FEES] - [WITHDRAWN_FEES]
+- Fee calculation uses [COLLATERAL_AMOUNT] before seizure deduction
+- No cap on [ACCUMULATED_FEES] causing overflow
+- [LIQUIDATION_BONUS] + [PROTOCOL_FEE] > 100% enabling over-seizure
+
+#### **AUCTION & DUTCH AUCTION FAILURES**
+- [START_AUCTION] missing [COLLATERAL_LOCKED] check
+- [AUCTION_PRICE] decays via `startPrice * (block.timestamp - startTime) / duration`
+- [AUCTION_DURATION] = 0 causes division by zero
+- [BID] callable after [AUCTION_END_TIME]
+- [SETTLE_AUCTION] not restricted to winning bidder
+- Multiple auctions for same collateral position
+- [AUCTION_ID] reused across positions
+- [CANCEL_AUCTION] callable by non-owner
+- No minimum bid preventing dust auction spam
+- Auction settlement transfers collateral before burning debt
+
+#### **MULTI-POOL CROSS-CONTAMINATION**
+- [POOL_A].liquidate() affects [POOL_B].collateralValue
+- Shared [ORACLE] between pools without isolation
+- [TOTAL_DEBT] aggregated across pools but [COLLATERAL] siloed
+- [BORROW] in Pool A enables [LIQUIDATE] in Pool B via shared health
+- Cross-pool flash loan attack via [BORROW] → [LIQUIDATE] → [REPAY]
+- [POOL_UTILIZATION] computed globally but enforced per-pool
+- Inter-pool debt transfer without collateral migration
+- [LIQUIDATE_CROSS_POOL] missing pool ID validation
+
+***
+
+### **II. PROPERTY TESTING INVARIANTS**
+
+#### **INV-DEBT-001: Debt Share Conservation**
+```solidity
+function invariant_debt_share_conservation() external {
+    uint256 sumUserShares = 0;
+    for (uint i = 0; i < users.length; i++) {
+        sumUserShares += [GET_USER_DEBT_SHARES](users[i]);
+    }
+    assertEq(sumUserShares, [TOTAL_DEBT_SHARES], "Debt share sum != total");
+}
+```
+- Breaks in: [BURN_DEBT_SHARES] with rounding error
+- Breaks in: [MINT_DEBT_SHARES] during reentrancy
+- Condition: Partial repayment with precision truncation
+- Attacker gain: Orphaned shares → unpayable debt
+
+#### **INV-COLLATERAL-002: Collateral Ratio Monotonicity**
+```solidity
+function invariant_collateral_ratio_monotonic() external {
+    uint256 ratioBefore = [GET_COLLATERAL_RATIO](user);
+    [ACCRUE_INTEREST]();
+    uint256 ratioAfter = [GET_COLLATERAL_RATIO](user);
+    assertLe(ratioAfter, ratioBefore, "Collateral ratio increased");
+}
+```
+- Breaks in: Interest accrual without debt update
+- Breaks in: Oracle price increase
+- Condition: [COLLATERAL_VALUE] stale while [DEBT_VALUE] fresh
+- Attacker gain: Avoid liquidation despite insolvency
+
+#### **INV-LIQUIDATION-003: Liquidation Threshold Enforcement**
+```solidity
+function invariant_liquidation_threshold() external {
+    for (uint i = 0; i < users.length; i++) {
+        uint256 health = [CALCULATE_HEALTH](users[i]);
+        bool liquidatable = [IS_LIQUIDATABLE](users[i]);
+        if (health < [LIQUIDATION_THRESHOLD]) {
+            assertTrue(liquidatable, "Unhealthy not liquidatable");
+        }
+    }
+}
+```
+- Breaks in: [IS_LIQUIDATABLE] uses stale health
+- Breaks in: [LIQUIDATION_THRESHOLD] changed mid-block
+- Condition: Health computed before threshold update
+- Attacker gain: Escape liquidation
+
+#### **INV-INTEREST-004: Borrow/Lend Rate Synchrony**
+```solidity
+function invariant_rate_synchrony() external {
+    [UPDATE_RATES]();
+    uint256 borrowRate = [GET_BORROW_RATE]();
+    uint256 supplyRate = [GET_SUPPLY_RATE]();
+    uint256 utilization = [GET_UTILIZATION]();
+    uint256 expectedSupply = borrowRate * utilization * (1 - [RESERVE_FACTOR]) / 1e18;
+    assertApproxEqRel(supplyRate, expectedSupply, 0.01e18, "Rate desync");
+}
+```
+- Breaks in: [RESERVE_FACTOR] applied after supply rate calc
+- Breaks in: [UTILIZATION] computed with stale [TOTAL_BORROWS]
+- Condition: Flash deposit inflates [TOTAL_SUPPLY]
+- Attacker gain: Earn disproportionate interest
+
+#### **INV-LIQUIDATION-005: Collateral > Debt Post-Liquidation**
+```solidity
+function invariant_collateral_exceeds_debt_after_liquidation() external {
+    vm.prank(liquidator);
+    [LIQUIDATE](borrower, debtAmount);
+    
+    uint256 remainingCollateral = [GET_COLLATERAL](borrower);
+    uint256 remainingDebt = [GET_DEBT](borrower);
+    uint256 collateralValue = remainingCollateral * [GET_PRICE]([COLLATERAL_TOKEN]);
+    
+    assertGe(collateralValue * [COLLATERAL_FACTOR] / 1e18, remainingDebt, "Under-collateralized after liquidation");
+}
+```
+- Breaks in: Over-seizure via [LIQUIDATION_BONUS] miscalc
+- Breaks in: Debt not reduced proportionally to collateral seized
+- Condition: [SEIZE_AMOUNT] > [DEBT_AMOUNT] * [LIQUIDATION_THRESHOLD]
+- Attacker gain: Extract excess collateral
+
+#### **INV-SOLVENCY-006: No Value Creation**
+```solidity
+function invariant_no_value_creation() external {
+    uint256 totalSupplied = [TOTAL_SUPPLY]();
+    uint256 totalBorrowed = [TOTAL_BORROWS]();
+    uint256 reserves = [RESERVES]();
+    
+    uint256 expectedBalance = totalSupplied - totalBorrowed + reserves;
+    uint256 actualBalance = [UNDERLYING].balanceOf(address([POOL]));
+    
+    assertEq(actualBalance, expectedBalance, "Value created from thin air");
+}
+```
+- Breaks in: [MINT] without corresponding [TRANSFER_FROM]
+- Breaks in: [REPAY] burns debt but doesn't transfer tokens
+- Condition: Fee-on-transfer token breaks accounting
+- Attacker gain: Mint unbacked shares
+
+#### **INV-DEBT-007: No Unpayable Debt Residues**
+```solidity
+function invariant_no_unpayable_debt() external {
+    for (uint i = 0; i < users.length; i++) {
+        uint256 debt = [GET_DEBT](users[i]);
+        uint256 repayable = [MAX_REPAY](users[i]);
+        assertGe(repayable, debt, "Debt exceeds repayable");
+    }
+}
+```
+- Breaks in: Dust debt after full repayment attempt
+- Breaks in: [MAX_REPAY] computed with stale interest
+- Condition: Rounding causes 1 wei residue
+- Attacker gain: DoS on position closure
+
+#### **INV-BADDEBT-008: No Bad Debt Leakage**
+```solidity
+function invariant_no_bad_debt_leakage() external {
+    uint256 totalCollateralValue = 0;
+    uint256 totalDebtValue = 0;
+    
+    for (uint i = 0; i < users.length; i++) {
+        totalCollateralValue += [GET_COLLATERAL_VALUE](users[i]);
+        totalDebtValue += [GET_DEBT_VALUE](users[i]);
+    }
+    
+    assertGe(totalCollateralValue * [MIN_COLLATERAL_FACTOR] / 1e18, totalDebtValue, "System under-collateralized");
+}
+```
+- Breaks in: Oracle price crash before liquidations execute
+- Breaks in: Liquidation auction fails to clear debt
+- Condition: Slippage in [SEIZE_COLLATERAL] swap
+- Attacker gain: System insolvency → socialize loss
+
+***
+
+### **III. CROSS-CONTRACT FAILURE MODES**
+
+#### **SEQUENCE-001: Oracle Update → Health Calc → Liquidation**
+```
+1. [ORACLE].pushPrice(asset, newPrice)
+2. [POOL].calculateHealth(user)  // Uses old cached price
+3. [POOL].liquidate(user)  // Executes with stale health
+```
+- **Desync Window:** Between pushPrice and internal cache update
+- **Exploit:** Front-run pushPrice with liquidation at favorable old price
+- **Fix Point:** Force [CALCULATE_HEALTH] to pull fresh price
+
+#### **SEQUENCE-002: Borrow → Accrue Interest → Liquidate**
+```
+1. [POOL].borrow(amount)  // Does not accrue interest first
+2. [POOL].accrueInterest()  // Called by liquidator
+3. [POOL].liquidate(user)  // Uses freshly accrued interest
+```
+- **Desync Window:** Between borrow and interest accrual
+- **Exploit:** Borrow max without accrued interest, get liquidated immediately after accrue
+- **Fix Point:** Force [BORROW] to call [ACCRUE_INTEREST] first
+
+#### **SEQUENCE-003: Collateral Withdraw → Liquidation Check**
+```
+1. [POOL].withdrawCollateral(amount)
+2. [POOL].calculateHealth(msg.sender)  // Health check after withdraw
+3. require(health > threshold)
+```
+- **Desync Window:** Collateral withdrawn before health verification
+- **Exploit:** Flash loan collateral withdrawal, liquidation triggered, repay in same tx
+- **Fix Point:** Check health before collateral state change
+
+#### **SEQUENCE-004: Liquidate → Seize → Fee Route → Debt Burn**
+```
+1. [LIQUIDATE_ENGINE].liquidate(borrower)
+2. [COLLATERAL_TOKEN].transfer(liquidator, seizedAmount)
+3. [FEE_ROUTER].routeFee(protocolFee)  // Reentrancy window
+4. [DEBT_TOKEN].burn(borrower, debtAmount)
+```
+- **Desync Window:** Between collateral seize and debt burn
+- **Exploit:** Reenter via fee router, double-liquidate same position
+- **Fix Point:** Use nonReentrant modifier or CEI pattern
+
+#### **SEQUENCE-005: Interest Update → Withdraw → Liquidation**
+```
+1. [INTEREST_MODEL].updateRates()  // New rates calculated
+2. [POOL].withdraw(amount)  // Uses old rate
+3. [POOL].liquidate(user)  // Uses new rate for health calc
+```
+- **Desync Window:** Rate update and withdrawal not atomic
+- **Exploit:** Withdraw at old favorable rate, avoid liquidation at new rate
+- **Fix Point:** Lock rates during user operations
+
+#### **SEQUENCE-006: Multi-Asset Collateral Liquidation**
+```
+1. [POOL].liquidate(user, assetA)  // Seizes assetA
+2. [ORACLE].getPrice(assetA)  // Price A
+3. [POOL].liquidate(user, assetB)  // Seizes assetB
+4. [ORACLE].getPrice(assetB)  // Price B (updated after A)
+```
+- **Desync Window:** AssetB price updates between liquidations
+- **Exploit:** Liquidate assetA at old price, assetB at new price, extract arbitrage
+- **Fix Point:** Snapshot all prices at liquidation start
+
+#### **SEQUENCE-007: Auction Start → Bid → Settle**
+```
+1. [AUCTION].startAuction(collateral)
+2. [AUCTION].placeBid(amount)  // No collateral lock check
+3. [AUCTION].settleAuction()  // Transfers unlocked collateral
+```
+- **Desync Window:** Collateral not locked during auction
+- **Exploit:** Withdraw collateral during auction, settle auction anyway
+- **Fix Point:** Lock collateral in [START_AUCTION]
+
+#### **SEQUENCE-008: Flash Loan → Borrow → Liquidate → Repay**
+```
+1. [FLASH_LENDER].flashLoan(largeAmount)
+2. [POOL].deposit(largeAmount)  // Inflate utilization
+3. [POOL].borrow(maxAmount, victim)  // Victim borrows at inflated rate
+4. [POOL].liquidate(victim)  // Immediate liquidation due to rate spike
+5. [FLASH_LENDER].repay(largeAmount)
+```
+- **Desync Window:** Single-block rate manipulation
+- **Exploit:** Flash deposit → rate spike → force liquidation
+- **Fix Point:** TWAP rates or max rate delta
+
+***
+
+### **IV. ATTACK TEMPLATES**
+
+#### **ATTACK-LIQ-001: Stale Health Oracle Front-Run**
+
+**Preconditions:**
+- Oracle updates via [PUSH_PRICE] with 1-block delay
+- [CALCULATE_HEALTH] caches oracle price
+- Liquidation threshold = 1.2
+
+**Exploit Steps:**
+```
+1. Monitor mempool for [PUSH_PRICE](collateralToken, newPrice)
+2. Detect price drop: oldPrice = 100, newPrice = 80
+3. Front-run with [LIQUIDATE](victim)
+4. [CALCULATE_HEALTH] uses cached oldPrice = 100
+5. Victim appears healthy (collateralValue = 100 * amount)
+6. [PUSH_PRICE] executes, updates to newPrice = 80
+7. Back-run with second [LIQUIDATE](victim)
+8. Now victim unhealthy (collateralValue = 80 * amount)
+9. Seize collateral at 80 price, sell at 100 on DEX
+```
+
+**Breakpoint:**
+- [CALCULATE_HEALTH] line reading `cachedPrice[asset]`
+
+**Broken Invariants:**
+- INV-ORACLE: Price freshness within 1 block
+- INV-LIQUIDATION-003: Liquidation threshold enforcement
+
+**Required Liquidity:**
+- Victim debt amount for repayment
+- Gas for front-run + back-run
+
+**MEV Considerations:**
+- Priority gas auction with block builder
+- Bundle [LIQUIDATE] + DEX arbitrage
+
+**Value Extraction:**
+- `seizedCollateral * (oldPrice - newPrice) * liquidationBonus`
+
+***
+
+#### **ATTACK-LIQ-002: Partial Liquidation Rounding Exploit**
+
+**Preconditions:**
+- [LIQUIDATE] allows partial liquidations
+- Collateral seize calculation: `debtRepaid * liquidationBonus / collateralPrice`
+- Division truncation enabled
+
+**Exploit Steps:**
+```
+1. Victim has debt = 10,000, collateral = 15,000 (healthy)
+2. Attacker manipulates oracle: collateralPrice drops to 8,000
+3. Victim now unhealthy: 15,000 < 10,000 * 1.2
+4. Attacker calls [LIQUIDATE](victim, 1) // Repay 1 wei of debt
+5. seizedCollateral = 1 * 1.1 / 8000 = 0.0001375 = 0 (rounds down)
+6. Debt reduced by 1 wei, collateral unchanged
+7. Repeat 10,000 times
+8. Victim debt fully repaid, collateral never seized
+9. Attacker front-runs victim's self-repay, steals zero-cost liquidation
+```
+
+**Breakpoint:**
+- [LIQUIDATE] line calculating `seizedAmount` with division
+
+**Broken Invariants:**
+- INV-LIQUIDATION-005: Collateral > debt post-liquidation
+- INV-SOLVENCY-006: No value creation
+
+**Required Liquidity:**
+- 10,000 wei for 10,000 micro-liquidations
+- Gas costs must be < collateral value
+
+**MEV Considerations:**
+- Bundle 10,000 [LIQUIDATE] calls in single block
+- Bribe validator for inclusion
+
+**Value Extraction:**
+- Victim's 15,000 collateral with near-zero cost
+
+***
+
+#### **ATTACK-LIQ-003: Interest Accrual Timing Manipulation**
+
+**Preconditions:**
+- [ACCRUE_INTEREST] callable by anyone
+- [CALCULATE_HEALTH] uses [TOTAL_DEBT] including accrued interest
+- Interest compounds per block
+
+**Exploit Steps:**
+```
+1. Victim borrows 10,000 at t=0
+2. Wait 1000 blocks without calling [ACCRUE_INTEREST]
+3. Victim health = collateral / (10,000 + 0 accrued) = healthy
+4. Attacker calls [ACCRUE_INTEREST] at t=1000
+5. Interest accrues: 10,000 → 12,000 (20% over 1000 blocks)
+6. Victim health = collateral / 12,000 = unhealthy
+7. Attacker immediately calls [LIQUIDATE](victim)
+8. Victim had no warning, liquidated instantly
+```
+
+**Breakpoint:**
+- [ACCRUE_INTEREST] line updating `totalBorrows += interest`
+
+**Broken Invariants:**
+- INV-INTEREST-004: Borrow/lend rate synchrony
+- INV-COLLATERAL-002: Collateral ratio monotonicity
+
+**Required Liquidity:**
+- Victim debt for repayment
+- Gas for [ACCRUE_INTEREST] + [LIQUIDATE]
+
+**MEV Considerations:**
+- Bundle both calls atomically
+- Maximize interest accrual window
+
+**Value Extraction:**
+- `seizedCollateral * liquidationBonus - debtRepaid`
+
+***
+
+#### **ATTACK-LIQ-004: Debt Share Inflation via Reentrancy**
+
+**Preconditions:**
+- [MINT_DEBT_SHARES] updates `totalDebtShares` after external call
+- [BORROW] calls [TRANSFER_FROM] with reentrancy window
+
+**Exploit Steps:**
+```
+1. Attacker contract implements ERC777 hook
+2. Attacker calls [BORROW](10,000)
+3. [BORROW] calls [MINT_DEBT_SHARES](attacker, shares)
+4. [MINT_DEBT_SHARES] calculates shares = 10,000 * totalDebtShares / totalDebt
+5. [MINT_DEBT_SHARES] calls token.transferFrom(attacker, pool, 10,000)
+6. Token hook reenters [BORROW](10,000) again
+7. Second [BORROW] calculates shares with old totalDebtShares (not yet updated)
+8. Both calls mint shares against same totalDebt
+9. totalDebtShares inflated, attacker's share percentage inflated
+10. Attacker repays less than borrowed
+```
+
+**Breakpoint:**
+- [MINT_DEBT_SHARES] line `totalDebtShares += shares` after external call
+
+**Broken Invariants:**
+- INV-DEBT-001: Debt share conservation
+- CEI pattern violation
+
+**Required Liquidity:**
+- 20,000 tokens for double borrow
+- Must repay before detection
+
+**MEV Considerations:**
+- Single transaction atomic execution
+- No MEV competition
+
+**Value Extraction:**
+- `borrowed - (borrowed * deflatedSharePercentage)`
+
+***
+
+#### **ATTACK-LIQ-005: Oracle Timestamp Replay Attack**
+
+**Preconditions:**
+- [GET_PRICE] returns `(price, timestamp)` but doesn't validate timestamp
+- [LIQUIDATE] accepts any recent price within 1 hour
+
+**Exploit Steps:**
+```
+1. At t=0: Oracle price = 100, timestamp = 0
+2. At t=3600: Oracle price = 50, timestamp = 3600
+3. Attacker captures old signature: (price=100, timestamp=0)
+4. Attacker calls [PUSH_PRICE](asset, 100, 0, signature)
+5. [PUSH_PRICE] validates signature (valid)
+6. Doesn't check timestamp < block.timestamp - MAX_AGE
+7. Price reverts to 100
+8. Attacker liquidates victim at inflated price
+9. Seizes excess collateral
+10. Oracle corrects to 50, attacker profits
+```
+
+**Breakpoint:**
+- [PUSH_PRICE] missing line `require(timestamp > lastUpdate)`
+
+**Broken Invariants:**
+- INV-ORACLE: Price freshness
+- Timestamp monotonicity
+
+**Required Liquidity:**
+- Victim debt amount
+- Oracle signature replay capability
+
+**MEV Considerations:**
+- Coordinate with validator to include replay tx
+- Sandwich with DEX arbitrage
+
+**Value Extraction:**
+- `seizedCollateral * (replayPrice - currentPrice) / currentPrice`
+
+***
+
+#### **ATTACK-LIQ-006: Multi-Pool Cross-Liquidation**
+
+**Preconditions:**
+- [POOL_A] and [POOL_B] share same [ORACLE]
+- User can borrow from both pools
+- Health calculated per-pool but collateral shared
+
+**Exploit Steps:**
+```
+1. Victim deposits 10,000 collateral in [POOL_A]
+2. Victim borrows 8,000 from [POOL_A] (healthy: 10,000 > 8,000 * 1.2)
+3. Victim borrows 1,000 from [POOL_B] against same collateral
+4. [POOL_B] calculates health: 10,000 > 1,000 * 1.2 (healthy)
+5. Attacker manipulates oracle price down
+6. [POOL_A] health drops, victim liquidated in [POOL_A]
+7. Collateral seized by [POOL_A] liquidator
+8. [POOL_B] still sees victim as having 10,000 collateral (stale)
+9. Attacker liquidates victim in [POOL_B]
+10. [POOL_B] tries to seize already-seized collateral
+11. If no check, [POOL_B] seizes from other users' collateral
+```
+
+**Breakpoint:**
+- [POOL_B].liquidate missing cross-pool collateral lock check
+
+**Broken Invariants:**
+- INV-SOLVENCY-006: No value creation
+- Cross-pool collateral accounting
+
+**Required Liquidity:**
+- Debt in both pools for double liquidation
+
+**MEV Considerations:**
+- Bundle both liquidations atomically
+- Requires multi-pool MEV strategy
+
+**Value Extraction:**
+- Double-liquidation bonus from single collateral
+
+***
+
+#### **ATTACK-LIQ-007: Fee Routing Reentrancy**
+
+**Preconditions:**
+- [LIQUIDATE] routes protocol fee via [FEE_ROUTER].routeFee()
+- [FEE_ROUTER] calls external recipient contract
+- [LIQUIDATE] burns debt after fee routing
+
+**Exploit Steps:**
+```
+1. Attacker creates malicious [FEE_RECIPIENT] contract
+2. Attacker calls [LIQUIDATE](victim)
+3. [LIQUIDATE] seizes collateral
+4. [LIQUIDATE] calls [FEE_ROUTER].routeFee(protocolFee)
+5. [FEE_ROUTER] calls [FEE_RECIPIENT].receiveFee()
+6. [FEE_RECIPIENT] reenters [LIQUIDATE](victim) again
+7. Victim's debt not yet burned (still shows full debt)
+8. Second liquidation seizes collateral again
+9. First liquidation completes, burns debt
+10. Victim debt burned once, collateral seized twice
+```
+
+**Breakpoint:**
+- [LIQUIDATE] line calling [FEE_ROUTER] before debt burn
+
+**Broken Invariants:**
+- CEI pattern violation
+- INV-LIQUIDATION-005: Collateral > debt
+
+**Required Liquidity:**
+- Victim debt amount for first liquidation
+- Reentrancy gas costs
+
+**MEV Considerations:**
+- Single atomic transaction
+- No competition if [FEE_RECIPIENT] is attacker-controlled
+
+**Value Extraction:**
+- `seizedCollateral * 2 - debtRepaid * 1`
+
+***
+
+#### **ATTACK-LIQ-008: Auction Dutch Price Manipulation**
+
+**Preconditions:**
+- [START_AUCTION] starts Dutch auction with linear price decay
+- Price formula: `startPrice * (endTime - block.timestamp) / duration`
+- No minimum bid enforcement
+
+**Exploit Steps:**
+```
+1. Victim liquidated, auction starts at t=0
+2. startPrice = 10,000, endTime = t+3600, duration = 3600
+3. At t=3000: price = 10,000 * (3600-3000) / 3600 = 1,666
+4. Attacker monitors auction, waits until t=3599
+5. At t=3599: price = 10,000 * 1 / 3600 = 2.77
+6. Attacker calls [BID](2.77)
+7. Auction accepts minimum bid
+8. Attacker pays 2.77, receives 10,000 collateral
+9. Sells collateral for 10,000 on market
+```
+
+**Breakpoint:**
+- [BID] accepting price at t=3599 without minimum threshold
+
+**Broken Invariants:**
+- Auction price floor
+- INV-LIQUIDATION-005: Collateral value recovered
+
+**Required Liquidity:**
+- Minimum bid amount (near-zero)
+- Gas for bid transaction
+
+**MEV Considerations:**
+- Snipe auction at final block
+- Bribe validator for final slot
+
+**Value Extraction:**
+- `collateralValue - minBid`
+
+***
+
+#### **ATTACK-LIQ-009: Utilization Rate Flash Manipulation**
+
+**Preconditions:**
+- Interest rate model: `baseRate + slope * utilizationRate`
+- utilizationRate = totalBorrows / totalSupply
+- [BORROW] uses current utilization for rate
+
+**Exploit Steps:**
+```
+1. Pool has totalSupply = 100,000, totalBorrows = 50,000
+2. Utilization = 50%, borrowRate = 5%
+3. Attacker flash loans 1,000,000 tokens
+4. Attacker deposits 1,000,000 via [SUPPLY]
+5. totalSupply = 1,100,000, totalBorrows = 50,000
+6. Utilization = 4.5%, borrowRate = 0.5%
+7. Victim borrows 50,000 at 0.5% rate (locked in)
+8. Attacker withdraws 1,000,000
+9. totalSupply = 100,000, totalBorrows = 100,000
+10. Utilization = 100%, supplyRate = 50%
+11. Attacker deposits again, earns 50% on victim's debt
+12. Repays flash loan
+```
+
+**Breakpoint:**
+- [UPDATE_RATES] using spot utilization without TWAP
+
+**Broken Invariants:**
+- INV-INTEREST-004: Rate synchrony
+- Utilization rate manipulation resistance
+
+**Required Liquidity:**
+- Flash loan amount: 10x pool size
+- Gas for flash loan + deposit + withdraw cycle
+
+**MEV Considerations:**
+- Atomic flash loan transaction
+- Requires flash loan provider integration
+
+**Value Extraction:**
+- `victimDebt * (manipulatedRate - fairRate) * timeHeld`
+
+***
+
+#### **ATTACK-LIQ-010: Collateral Token Rebase Exploitation**
+
+**Preconditions:**
+- Collateral token is rebase token (e.g., stETH, aToken)
+- [COLLATERAL_BALANCE] cached, not queried real-time
+- Positive rebase increases balance without event
+
+**Exploit Steps:**
+```
+1. Attacker deposits 10,000 rebase tokens
+2. [COLLATERAL_BALANCE][attacker] = 10,000
+3. Rebase occurs: actual balance = 11,000
+4. [GET_COLLATERAL] still returns 10,000 (cached)
+5. Attacker's health appears lower than actual
+6. Attacker calls [UPDATE_COLLATERAL] (if exists)
+7. [COLLATERAL_BALANCE][attacker] = 11,000
+8. Attacker immediately borrows against new 11,000
+9. Second rebase occurs: actual balance = 12,000
+10. Attacker withdraws 12,000, repays debt on 10,000 initial
+```
+
+**Breakpoint:**
+- [GET_COLLATERAL] reading cached balance instead of `balanceOf()`
+
+**Broken Invariants:**
+- INV-COLLATERAL: Real-time balance tracking
+- Rebase-aware accounting
+
+**Required Liquidity:**
+- Initial rebase token deposit
+- Patience for rebase events
+
+**MEV Considerations:**
+- Time attack around known rebase schedules
+- Front-run rebase oracle update
+
+**Value Extraction:**
+- `(rebasedBalance - initialBalance) * collateralFactor`
+
+***
+
+### **V. UPGRADEABILITY RISKS**
+
+#### **STORAGE LAYOUT RISKS**
+
+**RISK-UPGRADE-001: LendingPool Storage Collision**
+```solidity
+// V1
+contract LendingPoolV1 {
+    uint256 public totalSupply;      // slot 0
+    uint256 public totalBorrows;     // slot 1
+    mapping(address => uint256) public userDeposits;  // slot 2
+}
+
+// V2 (vulnerable upgrade)
+contract LendingPoolV2 {
+    address public newAdmin;         // slot 0 ❌
+    uint256 public totalSupply;      // slot 1 ❌
+    uint256 public totalBorrows;     // slot 2 ❌
+    mapping(address => uint256) public userDeposits;  // slot 3 ❌
+}
+```
+- **Collision:** `newAdmin` overwrites `totalSupply` slot
+- **Exploit:** If `newAdmin = 0x...0001000`, reads as `totalSupply = 4096`
+- **Impact:** Share price = totalAssets / 4096 → massive undervaluation
+- **Attack:** Mint shares at 99% discount, drain pool
+
+**RISK-UPGRADE-002: Inherited Oracle Storage Overlap**
+```solidity
+// V1
+contract OracleConsumerV1 is Ownable {
+    IPriceOracle public oracle;  // slot 51 (after Ownable)
+}
+
+// V2 (adds inheritance)
+contract OracleConsumerV2 is Ownable, ReentrancyGuard {
+    // ReentrancyGuard uses slot 51
+    IPriceOracle public oracle;  // Now at slot 52 ❌
+}
+```
+- **Collision:** `oracle` address shifts to different slot
+- **Exploit:** Old oracle address (slot 51) now reads as ReentrancyGuard status
+- **Impact:** Reentrancy guard broken, oracle address corrupted
+- **Attack:** Reenter liquidation functions
+
+**RISK-UPGRADE-003: Debt Share Struct Reordering**
+```solidity
+// V1
+struct DebtPosition {
+    uint256 shares;      // slot N
+    uint256 lastUpdate;  // slot N+1
+}
+
+// V2
+struct DebtPosition {
+    uint256 lastUpdate;  // slot N ❌
+    uint256 shares;      // slot N+1 ❌
+}
+```
+- **Collision:** `shares` and `lastUpdate` values swapped
+- **Exploit:** Old shares value (e.g., 1000) now interpreted as timestamp
+- **Impact:** Debt calculation corrupted
+- **Attack:** Borrow with inflated shares, repay with deflated debt
+
+**RISK-UPGRADE-004: Uninitialized Implementation Takeover**
+```solidity
+contract LendingPoolImpl {
+    address public admin;
+    
+    function initialize(address _admin) external initializer {
+        admin = _admin;
+    }
+}
+
+// Vulnerability: initialize() callable on implementation contract
+```
+- **Exploit Steps:**
+  1. Deploy proxy pointing to LendingPoolImpl
+  2. Proxy.initialize() not called (forgotten)
+  3. Attacker calls LendingPoolImpl.initialize(attacker) directly on implementation
+  4. If proxy delegates storage reads, attacker becomes admin
+  5. Attacker calls upgradeToAndCall(maliciousImpl)
+- **Impact:** Full protocol takeover
+- **Attack:** Drain all funds via malicious upgrade
+
+**RISK-UPGRADE-005: Delegatecall to Malicious Liquidation Logic**
+```solidity
+contract LendingPoolProxy {
+    address public implementation;
+    
+    fallback() external payable {
+        (bool success, ) = implementation.delegatecall(msg.data);
+        require(success);
+    }
+}
+
+// Attacker upgrades to:
+contract MaliciousImpl {
+    function liquidate(address user) external {
+        // Delegatecall context: uses proxy's storage
+        // Transfer all collateral to attacker
+        IERC20(collateralToken).transfer(msg.sender, type(uint256).max);
+    }
+}
+```
+- **Exploit:** Upgrade to implementation with malicious liquidate()
+- **Impact:** Bypass all liquidation checks, seize all collateral
+- **Attack:** Requires admin compromise or governance attack
+
+**RISK-UPGRADE-006: Interest Rate Model Upgrade Without State Migration**
+```solidity
+// V1
+contract InterestRateModelV1 {
+    uint256 public baseRate = 2e16;  // 2%
+    uint256 public slope = 5e16;     // 5%
+}
+
+// V2 (new model)
+contract InterestRateModelV2 {
+    uint256 public baseRate;  // Defaults to 0 ❌
+    uint256 public multiplier;  // New variable
+}
+```
+- **Exploit:** Upgrade without migrating baseRate
+- **Impact:** baseRate = 0, all borrows free
+- **Attack:** Borrow max at 0% rate, never repay
+
+**RISK-UPGRADE-007: Reentrancy Guard Reset on Upgrade**
+```solidity
+// V1
+contract LendingPoolV1 is ReentrancyGuardUpgradeable {
+    uint256 private _status;  // slot 101
+    
+    function liquidate() external nonReentrant {
+        // ...
+    }
+}
+
+// V2 (adds new variable before ReentrancyGuard)
+contract LendingPoolV2 is ReentrancyGuardUpgradeable {
+    uint256 public newCounter;  // slot 101 ❌
+    uint256 private _status;    // Now at slot 102 ❌
+}
+```
+- **Collision:** `_status` moves to different slot, reads as 0 (unlocked)
+- **Exploit:** Reentrancy protection disabled after upgrade
+- **Attack:** Reenter liquidate() via collateral token callback
+
+***
+
+**END OF RESEARCH PACK**
+
+**NOTE:** This framework requires actual contract code to bind all placeholder [FUNCTION_NAMES] and [VARIABLES] to real implementation. Provide contracts for complete instantiation.
