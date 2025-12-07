@@ -2404,41 +2404,6 @@ contract TestExtensionCallpointMismatch is Test {
 }
 ```
 
-### XCUT_TEST_004: Reentrancy Boundary via State Snapshot
-
-```solidity
-contract TestReentrancyBoundary_StateSnapshot is Test {
-    EUKUBOCore core;
-    
-    function setUp() public {
-        core = new EUKUBOCore();
-    }
-    
-    function testStateSnapshot_PreAndPostExtension() public {
-        uint256 pos1 = core.openPosition(user1, 500e18, 400e18);
-        uint256 pos2 = core.openPosition(user2, 500e18, 400e18);
-        
-        (uint24 tickBefore, uint96 liqBefore, ) = core.decodeSlot0();
-        uint256 debt1Before = core.getDebtValue(pos1);
-        uint256 debt2Before = core.getDebtValue(pos2);
-        
-        address nestingExt = address(new ReentrancyExtension(address(core)));
-        core.registerExtension(nestingExt, CALLPOINT_SWAP);
-        
-        core.swap(100e18, abi.encode(nestingExt));
-        
-        (uint24 tickAfter, uint96 liqAfter, ) = core.decodeSlot0();
-        uint256 debt1After = core.getDebtValue(pos1);
-        uint256 debt2After = core.getDebtValue(pos2);
-        
-        assertEq(debt1Before, debt1After);
-        assertEq(debt2Before, debt2After);
-        
-        assert(tickAfter >= tickBefore);
-        assert(liqAfter >= 0);
-    }
-}
-```
 
 ---
 
@@ -2492,7 +2457,6 @@ contract TestReentrancyBoundary_StateSnapshot is Test {
 **Assembly (1)**: CORE_005  
 **State (4)**: CORE_014, CORE_015, XCUT_008, XCUT_009  
 
----
 
 ## DETECTION HEURISTICS SUMMARY
 
@@ -2514,8 +2478,3 @@ contract TestReentrancyBoundary_StateSnapshot is Test {
 - tmpDebt non-zero after flashBorrow callback
 - Storage layout collision between core and extension
 
----
-
-✓ Super-Primer Complete.
-All three modules merged into single master reference.
-Ready for AI ingestion and comprehensive protocol auditing.
