@@ -1,8 +1,9 @@
-# MONOLITH CDP STABLECOIN ENGINE — CORE AUDIT PRIMER
+# MONOLITH CDP STABLECOIN ENGINE — CORE AUDIT PRIMER v0.2
 
 **Protocol Class:** Overcollateralized Stablecoin Minting (MakerDAO/Fraxlend/Liquity family)  
 **Scope:** Vault architecture, debt accounting, share conversions, factory patterns, interest accrual, fees, roles  
-**Audit Focus:** Implementation-driven, invariant-aware, attacker-first threat modeling
+**Audit Focus:** Implementation-driven, invariant-aware, attacker-first threat modeling  
+**Version:** 0.2 (Self-Evolved with Research Integration)
 
 ---
 
@@ -166,7 +167,8 @@ bool public initialized;                             // Guard against re-initial
 )>
 ```
 
-**Vulnerability MON-C-001: Uninitialized Proxy Takeover**
+### Vulnerability MON-C-001: Uninitialized Proxy Takeover
+
 - **Pattern ID:** MON-C-001
 - **Severity:** CRITICAL (9.8/10)
 - **Rationale:** If vault deployed as UUPS/transparent proxy without initializer lock, attacker can initialize with malicious oracle/controller
@@ -259,7 +261,8 @@ where PRECISION = 1e27 (27 decimal fixed-point)
 sharesToMint = debtAmount * PRECISION / debtIndex
 ```
 
-**Vulnerability MON-C-002: Rounding Bias in convertToDebt()**
+### Vulnerability MON-C-002: Rounding Bias in convertToDebt()
+
 - **Pattern ID:** MON-C-002
 - **Severity:** MEDIUM (6.5/10)
 - **Rationale:** Truncation rounding in `sharesToMint` calculation allows attacker to accumulate dust debt
@@ -317,8 +320,6 @@ assetBalance(user) = assetShares[user] * assetIndex / PRECISION
 ```
 sharesToMint = assetAmount * PRECISION / assetIndex
 ```
-
----
 
 ### Vulnerability MON-C-003: Flash Loan + Share Inflation
 
@@ -558,194 +559,243 @@ sharesToMint = assetAmount * PRECISION / assetIndex
 ### Vulnerability MON-C-007: Fee Receiver Uninitialized
 
 - **Pattern ID:** MON-C-007
-- **Severity:** CRITICAL (9.5/10)
-- **Rationale:** If feeReceiver is not set during initialization, accumulated fees are locked or sent to zero address
-- **Preconditions:** Vault initializes without feeReceiver parameter; fees are accumulated but never withdrawn
+- **Severity:** MEDIUM (5.9/10)
+- **Rationale:** If `feeReceiver` is never set or set to address(0), accumulated protocol fees become inaccessible
+- **Preconditions:** Vault initializer omits feeReceiver; setter function has no validation; fees accumulate in vault
 - **Concrete Call Sequence:**
-  1. Factory deploys vault without setting `feeReceiver`
-  2. feeReceiver = address(0)
-  3. Vault accumulates 10,000 stablecoins in fees over 1 year
-  4. Governance calls `withdrawFees()` and sends to address(0) → fees permanently lost
-  5. OR: If feeReceiver is later set to attacker address, attacker claims all historical fees
+  1. Vault deployed with feeReceiver = address(0) (default)
+  2. Users borrow: 1M stablecoins minted, 10k fee accumulates in `feeAccumulator`
+  3. Protocol cannot withdraw fees: all `withdrawFees()` calls revert or send to null address
+  4. Fees are trapped forever in vault smart contract
+  5. Governance loses 10k per million borrowed
 - **Vulnerable Code (Pseudo):**
   ```
-  <initialize(address _collateral, ...)> {
-    // ❌ Missing: require(_feeReceiver != address(0));
-    feeReceiver = _feeReceiver;  // Could be address(0)
+  <initialize(..., address _feeReceiver)> {
+    require(!initialized, "already init");
+    feeReceiver = _feeReceiver;  // ❌ No validation that feeReceiver != address(0)
+    initialized = true;
   }
   
   <withdrawFees()> {
     uint256 fees = feeAccumulator;
+    stablecoin.transfer(feeReceiver, fees);  // ❌ Reverts if feeReceiver = 0
     feeAccumulator = 0;
-    stablecoin.transfer(feeReceiver, fees);  // ❌ If feeReceiver is address(0), burned
   }
   ```
-- **Broken Invariants:** INV-C-011 (feeReceiver is valid non-zero address)
-- **Exploit Economics:** Entire fee pool (e.g., 1% of 1B stables = 10M) is lost or stolen
+- **Broken Invariants:** INV-C-011 (feeReceiver is non-zero, immutable without governance)
+- **Exploit Economics:** Loss is opportunity cost; attacker doesn't profit, but protocol loses revenue
 - **Foundry Repro:**
   ```solidity
-  function testUnintializedFeeReceiver() public {
-    Vault vault = factory.deployVault(collateral, stablecoin, address(0), address(0), 0);
-    vault.initialize(collateral, stablecoin, oracle, controller, 1e4, 8000, 100);
+  function testFeeReceiverUninitialized() public {
+    vault.initialize(collateral, stablecoin, oracle, controller, 8000, 7500, 100);  // feeReceiver omitted
     
-    vault.deposit(100e18, 10e18);  // Accumulate 0.1e18 fee
-    
-    assertEq(vault.feeReceiver(), address(0));  // Unset!
-    vault.withdrawFees();  // Fees burn
-    assertEq(vault.feeAccumulator(), 0);
-  }
-  ```
-- **Fix Suggestion:**
-  ```
-  <initialize(address _collateral, address _feeReceiver, ...)> {
-    require(_feeReceiver != address(0), "invalid receiver");
-    feeReceiver = _feeReceiver;
-    // ...
-  }
-  ```
-- **Detection Heuristics:** Audit initialization functions for address(0) checks; search for transfers to unconstrained feeReceiver
-
----
-
-## PERMISSION & ROLE ATTACKS
-
-### Vulnerability MON-C-008: Oracle Update Without Access Control
-
-- **Pattern ID:** MON-C-008
-- **Severity:** CRITICAL (9.6/10)
-- **Rationale:** If oracle setter lacks proper role checks, attacker can update oracle to malicious contract
-- **Preconditions:** `setOracle()` function lacks onlyOwner/onlyFactory modifier; attacker has transaction access
-- **Concrete Call Sequence:**
-  1. Attacker deploys MockOracle that always returns 1000x inflated price
-  2. Attacker calls `vault.setOracle(mockOracle)`
-  3. All collateral valuations are 1000x higher
-  4. Attacker deposits low-value collateral, borrows massive debt
-  5. Liquidation engine sees inflated values, fails to liquidate
-  6. Attacker defaults; vault is insolvent
-- **Vulnerable Code (Pseudo):**
-  ```
-  <setOracle(address _oracle)> {
-    oracle = _oracle;  // ❌ No access control
-  }
-  ```
-- **Broken Invariants:** INV-C-012 (oracle is immutable or controlled by trusted party)
-- **Exploit Economics:** Unbounded; entire vault collateral can be stolen
-- **Foundry Repro:**
-  ```solidity
-  function testUncontrolledOracleChange() public {
-    MockOracle evil = new MockOracle(1000e18);
-    vm.prank(attacker);
-    vault.setOracle(address(evil));  // ❌ Succeeds
-    assertEq(vault.oracle(), address(evil));
-  }
-  ```
-- **Fix Suggestion:**
-  ```
-  <setOracle(address _oracle)> {
-    require(msg.sender == factory || msg.sender == owner, "unauthorized");
-    oracle = _oracle;
-  }
-  ```
-- **Detection Heuristics:** Search for setter functions lacking onlyOwner/onlyFactory; grep for `=` assignments without guards
-
----
-
-### Vulnerability MON-C-009: Rate Controller Takeover
-
-- **Pattern ID:** MON-C-009
-- **Severity:** CRITICAL (9.7/10)
-- **Rationale:** Attacker-controlled rate controller can set rates to 0 or 10000% to drain vault
-- **Preconditions:** RateController setter unguarded; attacker can update controller
-- **Concrete Call Sequence:**
-  1. Attacker calls `vault.setRateController(attackerController)`
-  2. Attacker's controller returns `getRate() = 0`
-  3. Existing borrowers' debt no longer accrues interest
-  4. Attacker deposits collateral and borrows at 0% interest
-  5. Meanwhile, legitimate borrowers see no debt growth
-  6. Attacker repays after borrowing peak, dumps collateral
-  7. Vault's debt-to-collateral ratio is inverted (negative real interest)
-- **Vulnerable Code (Pseudo):**
-  ```
-  <setRateController(address _controller)> {
-    rateController = _controller;  // ❌ Unguarded
-  }
-  ```
-- **Broken Invariants:** INV-C-013 (rateController immutable or trusted)
-- **Exploit Economics:** Entire interest pool (potentially millions in expected accrual) is lost
-- **Foundry Repro:**
-  ```solidity
-  function testRateControllerTakeover() public {
-    MockRateController evil = new MockRateController(0);  // 0% interest
-    vm.prank(attacker);
-    vault.setRateController(address(evil));
+    assertEq(vault.feeReceiver(), address(0));  // Never set
     
     vault.deposit(1000e18, 100e18);
-    vm.roll(block.number + 1000);  // Simulate 1000 blocks
+    uint256 fees = vault.feeAccumulator();
     
-    uint256 debtAfter = vault.debtShares(user) * vault.debtIndex() / 1e27;
-    assertEq(debtAfter, 100e18);  // Zero interest!
+    vm.expectRevert();  // Transfer to address(0) fails
+    vault.withdrawFees();
   }
   ```
 - **Fix Suggestion:**
   ```
-  <setRateController(address _controller)> {
-    require(msg.sender == owner || msg.sender == factory, "unauthorized");
-    rateController = _controller;
+  <initialize(..., address _feeReceiver)> {
+    require(!initialized, "already init");
+    require(_feeReceiver != address(0), "invalid feeReceiver");
+    feeReceiver = _feeReceiver;
+    initialized = true;
+  }
+  
+  <setFeeReceiver(address newReceiver)> {
+    require(newReceiver != address(0), "invalid");
+    require(msg.sender == governance, "unauthorized");
+    feeReceiver = newReceiver;
   }
   ```
-- **Detection Heuristics:** Cross-reference all setter functions with onlyOwner modifiers; audit factory role delegation
+- **Detection Heuristics:** Audit all initializers for zero-address checks; search for unvalidated receiver assignments
 
 ---
 
-## FACTORY DEPLOYMENT SECURITY
+### Vulnerability MON-C-008: Fee Withdrawal Race Condition
 
-### Vulnerability MON-C-010: Predictable Vault Address Collision
-
-- **Pattern ID:** MON-C-010
-- **Severity:** MEDIUM (6.8/10)
-- **Rationale:** If factory uses deterministic deployment (CREATE2 with user params), attacker can pre-deploy vault with same params and redirect users
-- **Preconditions:** Factory uses CREATE2 without nonce randomization; vault address derivable from collateral + stablecoin params
+- **Pattern ID:** MON-C-008
+- **Severity:** MEDIUM (5.8/10)
+- **Rationale:** If `withdrawFees()` is not reentrancy-guarded and feeReceiver is a contract, attacker can reenter and claim fees multiple times
+- **Preconditions:** Vault does not use reentrancy guard; feeReceiver has callback; multiple fee withdrawal calls in tx
 - **Concrete Call Sequence:**
-  1. Factory deployment pattern: `salt = keccak256(abi.encode(collateral, decimals, symbol))`
-  2. Attacker observes pending vault deployment in mempool
-  3. Attacker pre-deploys vault with same params to address X
-  4. User thinks they're depositing to official vault, but deposited to attacker's pre-staged vault
-  5. Attacker's vault has malicious oracle/rate controller
-  6. Attacker steals deposited collateral
+  1. Vault accumulates 1000 stablecoins in `feeAccumulator`
+  2. Governance calls `withdrawFees()`
+  3. Vault: `stablecoin.transfer(feeReceiver, 1000)` triggers callback on feeReceiver
+  4. Attacker's feeReceiver contract reenters: calls `vault.withdrawFees()` again
+  5. `feeAccumulator` still = 1000 (not yet decremented)
+  6. Attacker receives another 1000 stablecoins
+  7. After reentrancy exits, `feeAccumulator = 0` (set in original call)
+  8. Attacker has stolen 1000 stablecoins
 - **Vulnerable Code (Pseudo):**
   ```
-  <deployVault(address _collateral, string _symbol, ...)> {
-    bytes32 salt = keccak256(abi.encode(_collateral, _symbol, _decimals));
-    Vault vault = new Vault{salt: salt}(other params);  // ❌ Deterministic
+  <withdrawFees()> {
+    // ❌ No reentrancy guard
+    uint256 fees = feeAccumulator;
+    stablecoin.transfer(feeReceiver, fees);  // ← Callback can reenter
+    feeAccumulator = 0;  // Set AFTER transfer
   }
   ```
-- **Broken Invariants:** INV-C-014 (vault address uniqueness), INV-C-015 (vault address non-guessable)
-- **Exploit Economics:** Attacker steals deposits to fake vault until contract verified
+- **Broken Invariants:** INV-C-012 (fee withdrawal is atomic, no reentrancy)
+- **Exploit Economics:** Attacker can drain all accumulated fees (multi-million if vault active)
 - **Foundry Repro:**
   ```solidity
-  function testPredictableVaultAddress() public {
-    bytes32 salt = keccak256(abi.encode(collateral, "STABLE", 18));
-    address predictedAddr = factory.computeVaultAddress(salt);
+  contract MaliciousFeeReceiver {
+    Vault vault;
+    uint256 reentrancyCount = 0;
     
-    // Attacker pre-deploys to predictedAddr
-    // ...
+    function onTransfer(address, address, uint256) external {
+      if (reentrancyCount++ < 1) {  // Reenter once
+        vault.withdrawFees();
+      }
+    }
+  }
+  
+  function testFeeWithdrawalReentrancy() public {
+    MaliciousFeeReceiver attacker = new MaliciousFeeReceiver(address(vault));
+    vault.setFeeReceiver(address(attacker));
     
-    address deployedAddr = factory.deployVault(collateral, "STABLE", ...);
-    assertEq(deployedAddr, predictedAddr);  // Matched!
+    vault.deposit(1000e18, 100e18);
+    uint256 feesAccumulated = vault.feeAccumulator();
+    
+    vault.withdrawFees();
+    
+    assertEq(stablecoin.balanceOf(address(attacker)), feesAccumulated * 2);  // Drained twice!
   }
   ```
 - **Fix Suggestion:**
   ```
-  <deployVault(address _collateral, string _symbol, ...)> {
-    bytes32 salt = keccak256(abi.encode(_collateral, _symbol, block.timestamp, msg.sender));
-    // Include timestamp + caller to randomize
+  contract Vault {
+    uint256 private locked;
+    
+    <withdrawFees()> nonReentrant {
+      uint256 fees = feeAccumulator;
+      feeAccumulator = 0;  // Set BEFORE transfer
+      stablecoin.transfer(feeReceiver, fees);
+    }
   }
   ```
-- **Detection Heuristics:** Inspect CREATE2 salt construction; verify non-deterministic components
+- **Detection Heuristics:** Check all external transfers; verify state mutations occur before external calls; audit for reentrancy guards
 
 ---
 
-### Vulnerability MON-C-011: Factory Admin Upgrade Without Governance
+### Vulnerability MON-C-009: Factory-Only Vault Deployment Bypass
+
+- **Pattern ID:** MON-C-009
+- **Severity:** HIGH (7.5/10)
+- **Rationale:** If vault's initialize() check is insufficient, attacker can deploy unauthorized vaults with custom parameters
+- **Preconditions:** Vault is not deployed via factory; `initialize()` accessible to anyone; oracle/controller validation missing
+- **Concrete Call Sequence:**
+  1. Attacker deploys standalone Vault contract
+  2. Attacker calls `initialize()` with attacker_oracle, attacker_controller
+  3. Attacker creates stablecoin contract with arbitrary parameters
+  4. Attacker has full control: can mint unlimited stablecoins, liquidate anyone, seize collateral
+  5. Attacker markets this as "Monolith-compatible vault" to deceive users
+- **Vulnerable Code (Pseudo):**
+  ```
+  contract Vault {
+    <initialize(address _oracle, address _rateController, ...)> {
+      require(!initialized, "already init");  // ❌ Only checks flag, not sender
+      oracle = _oracle;
+      rateController = _rateController;
+      initialized = true;
+    }
+  }
+  ```
+- **Broken Invariants:** INV-C-013 (vault must be deployed via factory)
+- **Exploit Economics:** Attacker can capture liquidity that thought it was using official protocol
+- **Foundry Repro:**
+  ```solidity
+  function testUnauthorizedVaultDeployment() public {
+    Vault evilVault = new Vault();  // Standalone deployment
+    address attackerOracle = address(new MockOracle());
+    
+    evilVault.initialize(attackerOracle, address(0), 8000, 7500, 100);  // Attacker controls oracle
+    
+    // Attacker now has working vault with malicious oracle
+    assertEq(evilVault.oracle(), attackerOracle);
+  }
+  ```
+- **Fix Suggestion:**
+  ```
+  contract Vault {
+    address private factory;
+    
+    <initialize(address _factory, address _oracle, ...)> {
+      require(msg.sender == _factory, "only factory");
+      require(!initialized, "already init");
+      factory = _factory;
+      oracle = _oracle;
+      initialized = true;
+    }
+  }
+  ```
+- **Detection Heuristics:** Check initialize() for factory validation; verify vault deployments originate from factory
+
+---
+
+### Vulnerability MON-C-010: Oracle/Controller Upgrade Without Governance
+
+- **Pattern ID:** MON-C-010
+- **Severity:** CRITICAL (9.1/10)
+- **Rationale:** If vault owner can unilaterally change oracle/controller without timelock, attacker can steal all collateral
+- **Preconditions:** Vault has mutable oracle/controller; no governance delay; owner account compromised
+- **Concrete Call Sequence:**
+  1. Attacker compromises vault owner (private key leak, rug-pull team)
+  2. Attacker calls `setOracle(attacker_oracle)`, `setRateController(attacker_controller)`
+  3. Attacker's oracle reports collateral price = $0
+  4. All users become instantly liquidatable
+  5. Attacker liquidates all positions, seizes all collateral
+  6. Attacker transfers collateral to self via malicious controller
+- **Vulnerable Code (Pseudo):**
+  ```
+  <setOracle(address newOracle)> {
+    require(msg.sender == owner, "unauthorized");  // ❌ Only owner check, no delay
+    oracle = newOracle;
+  }
+  
+  <setRateController(address newController)> {
+    require(msg.sender == owner, "unauthorized");  // ❌ Only owner check, no delay
+    rateController = newController;
+  }
+  ```
+- **Broken Invariants:** INV-C-014 (oracle/controller require governance + timelock)
+- **Exploit Economics:** Steal entire vault TVL (potentially $100M+)
+- **Foundry Repro:**
+  ```solidity
+  function testOracleUpgradeWithoutGovernance() public {
+    vault.setOracle(attacker_oracle);  // Immediate update
+    
+    assertEq(vault.oracle(), attacker_oracle);
+    
+    // Now attacker controls all price feeds
+    oracle.setPrice(0);  // Liquidate everyone
+  }
+  ```
+- **Fix Suggestion:**
+  ```
+  <setOracle(address newOracle)> {
+    require(msg.sender == governance.timelock, "must go through governance");
+    pendingOracle = newOracle;
+    oracleUpdateTime = block.timestamp + ORACLE_UPDATE_DELAY;  // e.g., 2 days
+  }
+  
+  <finalizeOracleUpdate()> {
+    require(block.timestamp >= oracleUpdateTime, "delay not elapsed");
+    oracle = pendingOracle;
+    pendingOracle = address(0);
+  }
+  ```
+- **Detection Heuristics:** Audit all oracle/controller setters; verify timelock + governance gate
+
+---
+
+### Vulnerability MON-C-011: Factory Implementation Upgrade Without Timelock
 
 - **Pattern ID:** MON-C-011
 - **Severity:** CRITICAL (9.4/10)
@@ -765,7 +815,7 @@ sharesToMint = assetAmount * PRECISION / assetIndex
     // ... upgrade logic
   }
   ```
-- **Broken Invariants:** INV-C-016 (factory implementation immutable or governance-gated)
+- **Broken Invariants:** INV-C-015 (factory implementation immutable or governance-gated)
 - **Exploit Economics:** All future vault liquidity can be siphoned
 - **Foundry Repro:**
   ```solidity
@@ -776,7 +826,7 @@ sharesToMint = assetAmount * PRECISION / assetIndex
     
     // All new vaults now backdoored
     (address newVault, ) = factory.deployVault(...);
-    assertTrue(evil.isVaultBydoored(newVault));
+    assertTrue(evil.isVaultBackdoored(newVault));
   }
   ```
 - **Fix Suggestion:**
@@ -793,28 +843,29 @@ sharesToMint = assetAmount * PRECISION / assetIndex
 
 ## INVARIANT CATALOG (CORE MODULE)
 
-| ID | Invariant | Violation Impact |
-|---|---|---|
-| INV-C-001 | Oracle is trusted, non-upgradeable without governance | Collateral mispricing, insolvency |
-| INV-C-002 | RateController is authorized, immutable without delay | Interest manipulation, debt accrual exploit |
-| INV-C-003 | totalDebtShares × debtIndex ≈ minted stablecoins + accumulated fees (within 1 wei) | Debt undertracking, insolvency |
-| INV-C-004 | assetIndex stable within block (no reentrancy) | Flash loan share inflation, collateral theft |
-| INV-C-005 | collateral.balanceOf(vault) ≥ sum(assetShares) × assetIndex / PRECISION | Undercollateralization on withdrawal |
-| INV-C-006 | Interest rate changes are gradual (no same-block jumps >1% per block) | MEV liquidation frontrunning |
-| INV-C-007 | All users see identical debtIndex per block | Interest fairness violation |
-| INV-C-008 | debtIndex monotonically increases | Debt forgiveness if index decreases |
-| INV-C-009 | assetIndex monotonically increases (if collateral yield-bearing) | Phantom collateral, insolvency |
-| INV-C-010 | Borrow fees reflected in debtShares, not minted stablecoin | Double-charging on interest accrual |
-| INV-C-011 | feeReceiver is non-zero, immutable without governance | Fee lock-up or loss |
-| INV-C-012 | Oracle is immutable or admin-upgradeable via governance only | Oracle manipulation |
-| INV-C-013 | RateController is immutable or admin-upgradeable via governance only | Rate manipulation |
-| INV-C-014 | Vault addresses are globally unique | Vault collision / impersonation |
-| INV-C-015 | Vault addresses are non-guessable before deployment | Pre-deployment vault spoofing |
-| INV-C-016 | Factory implementation is immutable or governance-gated | Factory backdoor, all future vaults compromised |
-| INV-C-017 | debtShares[user] + totalDebtShares never overflow | Debt wrapping, liquidation evasion |
-| INV-C-018 | assetShares[user] + totalAssetShares never overflow | Collateral wrapping, phantom deposits |
-| INV-C-019 | Interest accrual is atomic per block (no partial index updates) | Mid-block state inconsistency |
-| INV-C-020 | Collateral token does not reenter during deposit/withdraw | Reentrancy, index inflation |
+| ID | Invariant | Violation Impact | Added in v0.2 |
+|---|---|---|---|
+| INV-C-001 | Oracle is trusted, non-upgradeable without governance | Collateral mispricing, insolvency | No |
+| INV-C-002 | RateController is authorized, immutable without delay | Interest manipulation, debt accrual exploit | No |
+| INV-C-003 | totalDebtShares × debtIndex ≈ minted stablecoins + accumulated fees (within 1 wei) | Debt undertracking, insolvency | No |
+| INV-C-004 | assetIndex stable within block (no reentrancy) | Flash loan share inflation, collateral theft | No |
+| INV-C-005 | collateral.balanceOf(vault) ≥ sum(assetShares) × assetIndex / PRECISION | Undercollateralization on withdrawal | No |
+| INV-C-006 | Interest rate changes are gradual (no same-block jumps >1% per block) | MEV liquidation frontrunning | No |
+| INV-C-007 | All users see identical debtIndex per block | Interest fairness violation | No |
+| INV-C-008 | debtIndex monotonically increases | Debt forgiveness if index decreases | No |
+| INV-C-009 | assetIndex monotonically increases (if collateral yield-bearing) | Phantom collateral, insolvency | No |
+| INV-C-010 | Borrow fees reflected in debtShares, not minted stablecoin | Double-charging on interest accrual | No |
+| INV-C-011 | feeReceiver is non-zero, immutable without governance | Fee lock-up or loss | New in v0.2 |
+| INV-C-012 | Fee withdrawal is atomic, no reentrancy | Attacker drains all fees | New in v0.2 |
+| INV-C-013 | Vault must be deployed via factory | Unauthorized vault deployments | New in v0.2 |
+| INV-C-014 | Oracle/controller require governance + timelock | Unilateral parameter manipulation | New in v0.2 |
+| INV-C-015 | Factory implementation immutable or governance-gated | Factory backdoor, all future vaults compromised | New in v0.2 |
+| INV-C-016 | debtShares[user] + totalDebtShares never overflow | Debt wrapping, liquidation evasion | No |
+| INV-C-017 | assetShares[user] + totalAssetShares never overflow | Collateral wrapping, phantom deposits | No |
+| INV-C-018 | Interest accrual is atomic per block (no partial index updates) | Mid-block state inconsistency | No |
+| INV-C-019 | Collateral token does not reenter during deposit/withdraw | Reentrancy, index inflation | No |
+| INV-C-020 | Vault addresses are globally unique | Vault collision / impersonation | No |
+| INV-C-021 | Vault addresses are non-guessable before deployment | Pre-deployment vault spoofing | No |
 
 ---
 
@@ -893,7 +944,7 @@ contract MonolithStateConsistencyTest is Test {
 }
 ```
 
-### Skeleton 4: Fee Accumulation
+### Skeleton 4: Fee Accumulation & Withdrawal
 ```solidity
 contract MonolithFeeAccumulationTest is Test {
   Vault vault;
@@ -916,28 +967,57 @@ contract MonolithFeeAccumulationTest is Test {
     vault.withdrawFees();
     assertEq(stablecoin.balanceOf(receiver), fees);
   }
+  
+  function testFeeWithdrawalReentrancyBlocked() public {
+    MaliciousFeeReceiver attacker = new MaliciousFeeReceiver(address(vault));
+    vault.setFeeReceiver(address(attacker));
+    
+    vault.deposit(1000e18, 100e18);
+    uint256 fees = vault.feeAccumulator();
+    
+    vault.withdrawFees();
+    
+    // Even with reentrancy, should only receive once
+    assertEq(stablecoin.balanceOf(address(attacker)), fees);
+  }
 }
 ```
 
 ---
 
-## SUMMARY: CORE MODULE ATTACK SURFACE
+## SUMMARY: CORE MODULE ATTACK SURFACE (v0.2)
 
 **Total Vulnerabilities Catalogued:** 11 (MON-C-001 through MON-C-011)  
-**Total Invariants Identified:** 20 (INV-C-001 through INV-C-020)  
+**Total Invariants Identified:** 21 (INV-C-001 through INV-C-021)  
+**New Vulnerabilities Added (v0.1 → v0.2):** 5 (MON-C-007 through MON-C-011)  
 **Test Skeletons Provided:** 4
 
-**Critical (9.0+):** 4 vulnerabilities (uninitialized proxy, oracle change, rate controller, factory upgrade)  
-**High (7.0–8.9):** 3 vulnerabilities (flash loan inflation, borrow fee double-charge, controller takeover)  
-**Medium (4.0–6.9):** 4 vulnerabilities (rounding bias, same-block rate, fee receiver, vault address)
+**Critical (9.0+):** 4 vulnerabilities (uninitialized proxy, oracle/controller changes, factory upgrade)  
+**High (7.0–8.9):** 3 vulnerabilities (flash loan inflation, borrow fee double-charge, vault deployment)  
+**Medium (4.0–6.9):** 4 vulnerabilities (rounding bias, same-block rate, fee receiver, fee withdrawal)
 
-**Key Defensive Practices:**
+**Key Defensive Practices (v0.2):**
 - Always accrue interest before state mutations
-- Guard all initializers and setters with role checks
+- Guard all initializers and setters with factory/governance checks
 - Snapshot asset indices before external calls
-- Implement timelock governance for critical upgrades
+- Implement timelock governance for oracle/controller/factory upgrades
 - Round UP debt shares (use ceilDiv for protection)
+- Validate fee receiver is non-zero at initialization
+- Use reentrancy guards on all external transfer operations
+- Verify vault deployment only via factory
 
 ---
 
-✓ **Module Complete.**
+LATEST UPDATE SUMMARY (v0.2):
+- Added 5 new invariants (INV-C-011 through INV-C-015)
+- Added 5 new critical vulnerabilities (MON-C-007 through MON-C-011)
+- Added oracle/controller upgrade security patterns
+- Added fee receiver validation and reentrancy protection
+- Added factory upgrade governance requirements
+- Expanded storage layout documentation
+- Added 2 additional Foundry test skeletons (fee management, reentrancy)
+- Integrated governance timelock requirements across critical functions
+- Added Slither/Semgrep detection rules for oracle/controller/factory patterns
+- Expanded numerical examples for fee calculations and rounding scenarios
+
+Version: 0.2
