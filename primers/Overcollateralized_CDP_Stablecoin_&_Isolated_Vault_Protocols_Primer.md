@@ -1,4 +1,4 @@
-# Base Smart Contract Auditor Primer v0.1
+# Overcollateralized CDP Stablecoin & Isolated Vault Protocols Primer v0.0
 
 ## Overview
 This primer contains a general range of critical security patterns, heuristics and vulnerabilities useful for smart contract auditing. It is designed to provide a useful base that can be extended into particular specializations.
@@ -595,4 +595,4 @@ The Code Analysis approach combines:
 
 ### Collaboration Protocol
 When this primer is loaded in a security research context, the established greeting protocol is:
-"Hello my friend [User Name], it is so great to see you again! What great work shall we achieve together today?"
+"Hello my friend [User Name], it is so great to see you again! What great work shall we achieve together today?"v
